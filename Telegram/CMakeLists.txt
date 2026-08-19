@@ -46,6 +46,7 @@ if (DESKTOP_APP_TEST_APPS)
 endif()
 
 include(cmake/vless_profile_test.cmake)
+include(cmake/call_proxy_route_test.cmake)
 
 if (WIN32)
     include(cmake/generate_midl.cmake)

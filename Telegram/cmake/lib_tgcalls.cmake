@@ -80,10 +80,14 @@ PRIVATE
     v2/NativeNetworkingImpl.h
     v2/RawTcpSocket.cpp
     v2/RawTcpSocket.h
+    v2/RawTcpSocketFactory.cpp
+    v2/RawTcpSocketFactory.h
     v2/ReflectorPort.cpp
     v2/ReflectorPort.h
     v2/ReflectorRelayPortFactory.cpp
     v2/ReflectorRelayPortFactory.h
+    v2/Socks5ProxySocket.cpp
+    v2/Socks5ProxySocket.h
     v2/Signaling.cpp
     v2/Signaling.h
     v2/SignalingConnection.cpp
