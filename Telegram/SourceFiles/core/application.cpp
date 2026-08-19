@@ -967,14 +967,25 @@ void Application::setCurrentVlessProxy(
 			return;
 		}
 		if (!_private->vlessManager->commit()) {
-			if (previous.isEmpty()) {
-				_domain->local().clearVlessUrl();
-			} else {
-				_domain->local().writeVlessUrl(previous);
-			}
+			const auto restored = previous.isEmpty()
+				? _domain->local().clearVlessUrl()
+				: _domain->local().writeVlessUrl(previous);
 			_private->vlessChanging = false;
-			settings().proxy().connectionTypeChangesNotify();
-			done(VlessError::ProcessExited);
+			if (!restored) {
+				_private->vlessUrl = _domain->local().readVlessUrl().value_or(
+					QString());
+				_private->vlessManager->stop();
+				if (settings().proxy().vlessEnabled()) {
+					vlessProxyFailed();
+				} else {
+					settings().proxy().connectionTypeChangesNotify();
+				}
+			} else {
+				settings().proxy().connectionTypeChangesNotify();
+			}
+			done(restored
+				? VlessError::ProcessExited
+				: VlessError::ConfigurationFailed);
 			return;
 		}
 		_private->vlessUrl = url;

@@ -26,6 +26,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <rpl/event_stream.h>
 
+#ifdef Q_OS_LINUX
+#include <signal.h>
+#include <sys/prctl.h>
+#include <unistd.h>
+#endif // Q_OS_LINUX
+
 #include <utility>
 
 namespace Core {
@@ -88,6 +94,15 @@ void ConfigureSidecarProcess(
 		QProcess &process,
 		const SidecarPath &sidecar,
 		QStringList arguments) {
+#ifdef Q_OS_LINUX
+	const auto parentProcessId = ::getpid();
+	process.setChildProcessModifier([parentProcessId] {
+		if (::prctl(PR_SET_PDEATHSIG, SIGKILL) != 0
+			|| ::getppid() != parentProcessId) {
+			::_exit(127);
+		}
+	});
+#endif // Q_OS_LINUX
 	process.setProgram(sidecar.executable);
 	process.setArguments(std::move(arguments));
 	auto environment = QProcessEnvironment();
