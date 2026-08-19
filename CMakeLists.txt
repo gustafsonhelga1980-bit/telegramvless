@@ -23,6 +23,8 @@ project(Telegram
     HOMEPAGE_URL "https://desktop.telegram.org"
 )
 
+enable_testing()
+
 if (APPLE)
     enable_language(OBJC OBJCXX)
 endif()

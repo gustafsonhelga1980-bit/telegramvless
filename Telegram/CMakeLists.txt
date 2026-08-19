@@ -45,6 +45,8 @@ if (DESKTOP_APP_TEST_APPS)
     include(cmake/tests.cmake)
 endif()
 
+include(cmake/vless_profile_test.cmake)
+
 if (WIN32)
     include(cmake/generate_midl.cmake)
     generate_midl(Telegram ${src_loc}
@@ -532,6 +534,8 @@ PRIVATE
     core/application.h
     core/proxy_rotation_manager.cpp
     core/proxy_rotation_manager.h
+    core/vless_profile.cpp
+    core/vless_profile.h
     core/cached_webview_availability.h
     core/bank_card_click_handler.cpp
     core/bank_card_click_handler.h
