@@ -18,7 +18,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/vless_manager.h"
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
-#include "main/main_domain.h"
 #include "main/main_session.h"
 #include "mtproto/facade.h"
 #include "mtproto/mtproto_config.h"
@@ -26,7 +25,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "qr/qr_generate.h"
 #include "settings/settings_common.h"
 #include "storage/localstorage.h"
-#include "storage/storage_domain.h"
 #include "ui/basic_click_handlers.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/boxes/peer_qr_box.h"
@@ -2182,23 +2180,15 @@ object_ptr<Ui::BoxContent> ProxiesBoxController::vlessProxyBox() {
 	const auto current = Core::App().vlessUrl();
 	return Box([=](not_null<Ui::GenericBox*> box) {
 		box->setTitle(tr::lng_proxy_vless());
+		box->setWidth(st::boxWideWidth);
 		const auto field = box->addRow(object_ptr<Ui::InputField>(
 			box,
 			st::connectionPasswordInputField,
-			Ui::InputField::Mode::SingleLine,
+			Ui::InputField::Mode::NoNewlines,
 			tr::lng_proxy_vless_url(),
 			current));
 		field->setMaxLength(8192);
-		box->addRow(object_ptr<Ui::FlatLabel>(
-			box,
-			tr::lng_proxy_vless_about(),
-			st::boxLabel));
-		if (!_account->domain().local().hasLocalPasscode()) {
-			box->addRow(object_ptr<Ui::FlatLabel>(
-				box,
-				tr::lng_proxy_vless_passcode_about(),
-				st::boxLabel));
-		}
+		field->setMinHeight(field->st().heightMax);
 		box->setFocusCallback([=] { field->setFocusFast(); });
 		const auto save = box->addButton(tr::lng_connection_save(), [] {});
 		const auto cancel = box->addButton(tr::lng_cancel(), [] {});

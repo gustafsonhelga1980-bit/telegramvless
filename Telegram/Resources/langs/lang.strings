@@ -1280,8 +1280,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_proxy_vless_not_configured" = "Not configured";
 "lng_proxy_vless_unavailable" = "Unavailable";
 "lng_proxy_vless_url" = "Paste VLESS URL";
-"lng_proxy_vless_about" = "Telegram's standard app traffic will use this route. Calls, web content, and links opened in your browser are not included yet.";
-"lng_proxy_vless_passcode_about" = "Set a local passcode in Privacy and Security for stronger protection of this credential on disk.";
 "lng_proxy_vless_invalid" = "This VLESS URL is invalid or uses settings that this version does not support.";
 "lng_proxy_vless_xray_missing" = "The bundled Xray component could not be found or verified.";
 "lng_proxy_vless_start_failed" = "The VLESS proxy could not be started. Your connection was kept fail-closed.";
