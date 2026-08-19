@@ -62,6 +62,11 @@ settings.local.json
 .env
 .env.local
 .env.*.local
+/telegram_auth_credentials.txt
+/telegram_auth_credantials.txt
+/vless_connection.txt
+/telegram-data/
+/xray/config.json
 
 # Cursor IDE local settings (but keep .cursor/rules/)
 .cursor/*
