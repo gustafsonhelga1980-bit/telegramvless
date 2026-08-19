@@ -4687,6 +4687,10 @@ void OverlayWidget::displayDocument(
 void OverlayWidget::displayVideoStream(
 		const std::shared_ptr<Data::GroupCall> &call,
 		anim::activation activation) {
+	if (Core::App().calls().preventGroupCallForVless()) {
+		close();
+		return;
+	}
 	_fullScreenVideo = false;
 	_staticContent = QImage();
 	clearStreaming(true);

@@ -39,7 +39,20 @@ set_target_properties(test_call_proxy_route PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-add_dependencies(Telegram test_call_proxy_route)
+add_test(
+    NAME call_proxy_route_policy
+    COMMAND "../$<CONFIG>/test_call_proxy_route" --policy-only
+)
+set_tests_properties(call_proxy_route_policy PROPERTIES TIMEOUT 30)
+
+add_custom_target(check_call_proxy_route_policy
+    COMMAND $<TARGET_FILE:test_call_proxy_route> --policy-only
+    VERBATIM
+)
+
+add_dependencies(check_call_proxy_route_policy test_call_proxy_route)
+
+add_dependencies(Telegram check_call_proxy_route_policy)
 
 add_executable(test_socks5_proxy_socket)
 init_target(test_socks5_proxy_socket "(tests)")

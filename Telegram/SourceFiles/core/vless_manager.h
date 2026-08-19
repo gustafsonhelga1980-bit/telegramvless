@@ -22,6 +22,7 @@ enum class VlessError {
 	SidecarNotTrusted,
 	PortAllocationFailed,
 	ConfigurationFailed,
+	CallsActive,
 	ProcessStartFailed,
 	ProcessExited,
 	ReadinessTimeout,

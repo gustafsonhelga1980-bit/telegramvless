@@ -121,6 +121,7 @@ public:
 	void RemoteClose(int error);
 
 	[[nodiscard]] const std::vector<uint8_t> &sent() const;
+	[[nodiscard]] const std::vector<rtc::SocketAddress> &connects() const;
 	[[nodiscard]] int closeCalls() const;
 
 private:
@@ -129,6 +130,7 @@ private:
 	std::deque<SendAction> _sendActions;
 	std::vector<uint8_t> _sent;
 	std::vector<uint8_t> _input;
+	std::vector<rtc::SocketAddress> _connects;
 	ConnState _state = CS_CLOSED;
 	int _error = 0;
 	int _closeCalls = 0;
@@ -209,6 +211,7 @@ int ScriptedSocket::Bind(const rtc::SocketAddress &address) {
 
 int ScriptedSocket::Connect(const rtc::SocketAddress &address) {
 	_remoteAddress = address;
+	_connects.push_back(address);
 	_state = CS_CONNECTING;
 	return 0;
 }
@@ -359,6 +362,10 @@ const std::vector<uint8_t> &ScriptedSocket::sent() const {
 	return _sent;
 }
 
+const std::vector<rtc::SocketAddress> &ScriptedSocket::connects() const {
+	return _connects;
+}
+
 int ScriptedSocket::closeCalls() const {
 	return _closeCalls;
 }
@@ -397,6 +404,8 @@ bool Fixture::Start() {
 	const auto destination = rtc::SocketAddress(kTargetHost, kTargetPort);
 	return socket->Connect(destination) == 0
 		&& transport->GetRemoteAddress() == proxy
+		&& transport->connects()
+			== std::vector<rtc::SocketAddress>{ proxy }
 		&& socket->GetRemoteAddress() == destination
 		&& socket->GetState() == rtc::Socket::CS_CONNECTING;
 }
@@ -474,6 +483,56 @@ void Append(
 	}
 	fixture.transport->Receive(ConnectResponse());
 	return fixture.observer.connectCount == 1;
+}
+
+[[nodiscard]] bool TestAuthenticatedConnectContract() {
+	auto fixture = Fixture();
+	if (!Expect(fixture.Start(), "contract: Connect failed")) {
+		return false;
+	}
+	if (!Expect(
+			fixture.transport->sent().empty()
+				&& fixture.observer.connectCount == 0,
+			"contract: handshake started before proxy connection")) {
+		return false;
+	}
+
+	fixture.transport->CompleteConnect();
+	if (!Expect(
+			fixture.transport->sent() == GreetingRequest()
+				&& fixture.observer.connectCount == 0,
+			"contract: password-only greeting was wrong")) {
+		return false;
+	}
+
+	fixture.transport->Receive({ 5, 2 });
+	auto expected = GreetingRequest();
+	Append(expected, AuthenticationRequest());
+	if (!Expect(
+			fixture.transport->sent() == expected
+				&& fixture.observer.connectCount == 0,
+			"contract: authenticated request was wrong")) {
+		return false;
+	}
+
+	fixture.transport->Receive({ 1, 0 });
+	Append(expected, ConnectRequest());
+	if (!Expect(
+			fixture.transport->sent() == expected
+				&& fixture.observer.connectCount == 0,
+			"contract: CONNECT request was wrong")) {
+		return false;
+	}
+
+	fixture.transport->Receive(ConnectResponse());
+	const auto proxy = rtc::SocketAddress(kProxyHost, kProxyPort);
+	return Expect(
+		fixture.observer.connectCount == 1
+			&& fixture.observer.closeCount == 0
+			&& fixture.socket->GetState() == rtc::Socket::CS_CONNECTED
+			&& fixture.transport->connects()
+				== std::vector<rtc::SocketAddress>{ proxy },
+		"contract: tunnel connected without a proxy-only route");
 }
 
 [[nodiscard]] bool TestPartialWritesAndFragmentedResponses() {
@@ -645,6 +704,7 @@ void Append(
 				fixture.transport->closeCalls() == 1
 					&& fixture.observer.connectCount == 0
 					&& fixture.observer.closeCount == 1
+					&& fixture.transport->connects().size() == 1
 					&& fixture.socket->GetState() == rtc::Socket::CS_CLOSED,
 				test.name)) {
 			return false;
@@ -705,6 +765,7 @@ void Append(
 int main() {
 	using Test = std::pair<const char *, bool(*)()>;
 	const auto tests = std::vector<Test>{
+		{ "authenticated CONNECT contract", &TestAuthenticatedConnectContract },
 		{ "partial writes and fragmented responses", &TestPartialWritesAndFragmentedResponses },
 		{ "read while write pending", &TestReadWhileWritePending },
 		{ "send failure", &TestSendFailureClosesOnce },

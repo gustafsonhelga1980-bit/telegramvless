@@ -45,15 +45,33 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <tgcalls/VideoCaptureInterface.h>
 #include <tgcalls/StaticThreads.h>
 
+#include <atomic>
+
 namespace Calls {
 namespace {
 
 constexpr auto kServerConfigUpdateTimeoutMs = 24 * 3600 * crl::time(1000);
 
+std::atomic<int> PendingMediaTeardowns = 0;
+
 using CallSound = Call::Delegate::CallSound;
 using GroupCallSound = GroupCall::Delegate::GroupCallSound;
 
 } // namespace
+
+FnMut<void()> AddMediaTeardownWaiter() {
+	PendingMediaTeardowns.fetch_add(1, std::memory_order_acq_rel);
+	return [] {
+		const auto previous = PendingMediaTeardowns.fetch_sub(
+			1,
+			std::memory_order_acq_rel);
+		Expects(previous > 0);
+	};
+}
+
+bool HasPendingMediaTeardown() {
+	return PendingMediaTeardowns.load(std::memory_order_acquire) != 0;
+}
 
 class Instance::Delegate final
 	: public Call::Delegate
@@ -185,6 +203,12 @@ Instance::Instance()
 , _cachedDhConfig(std::make_unique<DhConfig>())
 , _chooseJoinAs(std::make_unique<Group::ChooseJoinAsProcess>())
 , _startWithRtmp(std::make_unique<Group::StartRtmpProcess>()) {
+	Core::App().proxyChanges(
+	) | rpl::filter([=](const Core::Application::ProxyChange &) {
+		return Core::App().settings().proxy().vlessEnabled();
+	}) | rpl::on_next([=] {
+		stopGroupCallsForVless();
+	}, _lifetime);
 }
 
 Instance::~Instance() {
@@ -220,6 +244,9 @@ void Instance::startOrJoinGroupCall(
 		std::shared_ptr<Ui::Show> show,
 		not_null<PeerData*> peer,
 		StartGroupCallArgs args) {
+	if (preventGroupCallForVless(show)) {
+		return;
+	}
 	confirmLeaveCurrent(show, peer, args, [=](StartGroupCallArgs args) {
 		using JoinConfirm = Calls::StartGroupCallArgs::JoinConfirm;
 		const auto context = (args.confirm == JoinConfirm::Always)
@@ -244,6 +271,9 @@ void Instance::startOrJoinGroupCall(
 
 void Instance::startOrJoinConferenceCall(StartConferenceInfo args) {
 	Expects(args.call || args.show);
+	if (preventGroupCallForVless(args.show)) {
+		return;
+	}
 
 	const auto migrationInfo = (args.migrating
 		&& args.call
@@ -283,11 +313,20 @@ void Instance::startOrJoinConferenceCall(StartConferenceInfo args) {
 	}
 }
 
-void Instance::startedConferenceReady(
+bool Instance::startedConferenceReady(
 		not_null<GroupCall*> call,
 		StartConferenceInfo args) {
+	if (Core::App().settings().proxy().vlessEnabled()) {
+		call->stopMediaAndHangup();
+		crl::on_main(this, [=] {
+			if (_startingGroupCall.get() == call) {
+				destroyGroupCall(call);
+			}
+		});
+		return false;
+	}
 	if (_startingGroupCall.get() != call) {
-		return;
+		return true;
 	}
 	const auto migrationInfo = _currentCallPanel
 		? _currentCallPanel->migrationInfo()
@@ -302,6 +341,7 @@ void Instance::startedConferenceReady(
 	const auto slug = Group::ExtractConferenceSlug(link);
 	finishConferenceInvitations(args);
 	destroyCurrentCall(real, slug);
+	return true;
 }
 
 void Instance::finishConferenceInvitations(const StartConferenceInfo &args) {
@@ -367,6 +407,9 @@ void Instance::confirmLeaveCurrent(
 void Instance::showStartWithRtmp(
 		std::shared_ptr<Ui::Show> show,
 		not_null<PeerData*> peer) {
+	if (preventGroupCallForVless(show)) {
+		return;
+	}
 	_startWithRtmp->start(peer, show, [=](Group::JoinInfo info) {
 		confirmLeaveCurrent(show, peer, {}, [=](auto) {
 			_startWithRtmp->close();
@@ -481,6 +524,9 @@ void Instance::destroyGroupCall(not_null<GroupCall*> call) {
 void Instance::createGroupCall(
 		Group::JoinInfo info,
 		const MTPInputGroupCall &inputCall) {
+	if (Core::App().settings().proxy().vlessEnabled()) {
+		return;
+	}
 	destroyCurrentCall();
 
 	auto call = std::make_unique<GroupCall>(
@@ -497,6 +543,48 @@ void Instance::createGroupCall(
 	_currentGroupCallPanel = std::make_unique<Group::Panel>(raw);
 	_currentGroupCall = std::move(call);
 	_currentGroupCallChanges.fire_copy(raw);
+}
+
+bool Instance::preventGroupCallForVless(
+		std::shared_ptr<Ui::Show> show) const {
+	if (!Core::App().settings().proxy().vlessEnabled()) {
+		return false;
+	}
+	auto box = Ui::MakeInformBox(
+		tr::lng_proxy_vless_group_calls_unavailable(tr::now));
+	if (show) {
+		show->showBox(std::move(box));
+	} else {
+		Ui::show(std::move(box));
+	}
+	return true;
+}
+
+void Instance::stopGroupCallsForVless() {
+	if (const auto call = _currentGroupCall.get()) {
+		call->stopMediaAndHangup();
+		if (_currentGroupCall.get() == call) {
+			destroyGroupCall(call);
+		}
+	}
+	if (const auto call = _startingGroupCall.get()) {
+		call->stopMediaAndHangup();
+		if (_startingGroupCall.get() == call) {
+			destroyGroupCall(call);
+		}
+	}
+	auto streams = std::vector<base::weak_ptr<GroupCall>>();
+	for (const auto &entry : _streams) {
+		streams.insert(
+			end(streams),
+			begin(entry.second),
+			end(entry.second));
+	}
+	for (const auto &weak : streams) {
+		if (const auto call = weak.get()) {
+			call->stopMediaAndHangup();
+		}
+	}
 }
 
 void Instance::refreshDhConfig() {
@@ -645,6 +733,24 @@ FnMut<void()> Instance::addAsyncWaiter() {
 
 void Instance::registerVideoStream(not_null<GroupCall*> call) {
 	_streams[&call->peer()->session()].push_back(call);
+}
+
+bool Instance::hasActiveMediaForVless() const {
+	if (_currentCall
+		|| _currentGroupCall
+		|| _startingGroupCall
+		|| !_asyncWaiters.empty()
+		|| HasPendingMediaTeardown()) {
+		return true;
+	}
+	for (const auto &entry : _streams) {
+		for (const auto &weak : entry.second) {
+			if (weak.get()) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 bool Instance::isSharingScreen() const {
@@ -1150,6 +1256,9 @@ void Instance::showConferenceInvite(
 		|| call->state != Data::CallState::Invitation
 		|| user->isSelf()
 		|| user->session().appConfig().callsDisabledForSession()) {
+		return;
+	} else if (Core::App().settings().proxy().vlessEnabled()) {
+		declineIncomingConferenceInvites(conferenceId);
 		return;
 	} else if (_currentCall
 		&& _currentCall->conferenceId() == conferenceId) {

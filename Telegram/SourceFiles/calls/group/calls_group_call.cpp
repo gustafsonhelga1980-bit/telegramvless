@@ -1820,9 +1820,11 @@ void GroupCall::joinDone(
 		setupConferenceCall();
 		_conferenceLinkSlug = Group::ExtractConferenceSlug(
 			_sharedCall->conferenceInviteLink());
-		Core::App().calls().startedConferenceReady(
-			this,
-			*_startConferenceInfo);
+		if (!Core::App().calls().startedConferenceReady(
+				this,
+				*_startConferenceInfo)) {
+			return;
+		}
 	}
 
 	trackParticipantsWithAccess();
@@ -2165,6 +2167,12 @@ void GroupCall::applyParticipantLocally(
 					MTPGroupCallParticipantVideo(),
 					MTPlong())),
 			MTP_int(0)).c_updateGroupCallParticipants());
+}
+
+void GroupCall::stopMediaAndHangup() {
+	destroyScreencast();
+	destroyController();
+	hangup();
 }
 
 void GroupCall::hangup() {
@@ -4261,15 +4269,25 @@ void GroupCall::destroyController() {
 	if (_instance) {
 		DEBUG_LOG(("Call Info: Destroying call controller.."));
 		invalidate_weak_ptrs(&_instanceGuard);
+		auto mediaDone = AddMediaTeardownWaiter();
 
 		_instance->stop(nullptr);
 		crl::async([
 			instance = base::take(_instance),
-			done = _delegate->groupCallAddAsyncWaiter()
+			done = _delegate->groupCallAddAsyncWaiter(),
+			mediaDone = std::move(mediaDone)
 		]() mutable {
 			instance = nullptr;
-			DEBUG_LOG(("Call Info: Call controller destroyed."));
-			done();
+			auto completion = std::make_shared<FnMut<void()>>([
+					done = std::move(done),
+					mediaDone = std::move(mediaDone)]() mutable {
+				mediaDone();
+				done();
+			});
+			tgcalls::PostCallTeardownBarrier([completion] {
+				DEBUG_LOG(("Call Info: Call controller destroyed."));
+				(*completion)();
+			});
 		});
 	}
 }
@@ -4278,15 +4296,25 @@ void GroupCall::destroyScreencast() {
 	if (_screenInstance) {
 		DEBUG_LOG(("Call Info: Destroying call screen controller.."));
 		invalidate_weak_ptrs(&_screenInstanceGuard);
+		auto mediaDone = AddMediaTeardownWaiter();
 
 		_screenInstance->stop(nullptr);
 		crl::async([
 			instance = base::take(_screenInstance),
-			done = _delegate->groupCallAddAsyncWaiter()
+			done = _delegate->groupCallAddAsyncWaiter(),
+			mediaDone = std::move(mediaDone)
 		]() mutable {
 			instance = nullptr;
-			DEBUG_LOG(("Call Info: Call screen controller destroyed."));
-			done();
+			auto completion = std::make_shared<FnMut<void()>>([
+					done = std::move(done),
+					mediaDone = std::move(mediaDone)]() mutable {
+				mediaDone();
+				done();
+			});
+			tgcalls::PostCallTeardownBarrier([completion] {
+				DEBUG_LOG(("Call Info: Call screen controller destroyed."));
+				(*completion)();
+			});
 		});
 	}
 }

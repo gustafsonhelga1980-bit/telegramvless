@@ -276,6 +276,7 @@ public:
 	void applyInputCall(const MTPInputGroupCall &inputCall);
 	void startConference();
 	void start(TimeId scheduleDate, bool rtmp);
+	void stopMediaAndHangup();
 	void hangup();
 	void discard();
 	void rejoinAs(Group::JoinInfo info);

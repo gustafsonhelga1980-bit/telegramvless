@@ -80,6 +80,9 @@ struct ConferenceInvites {
 	base::flat_map<not_null<UserData*>, ConferenceInviteMessages> users;
 };
 
+[[nodiscard]] FnMut<void()> AddMediaTeardownWaiter();
+[[nodiscard]] bool HasPendingMediaTeardown();
+
 class Instance final : public base::has_weak_ptr {
 public:
 	Instance();
@@ -91,7 +94,7 @@ public:
 		not_null<PeerData*> peer,
 		StartGroupCallArgs args);
 	void startOrJoinConferenceCall(StartConferenceInfo args);
-	void startedConferenceReady(
+	[[nodiscard]] bool startedConferenceReady(
 		not_null<GroupCall*> call,
 		StartConferenceInfo args);
 	void showStartWithRtmp(
@@ -153,6 +156,9 @@ public:
 	[[nodiscard]] FnMut<void()> addAsyncWaiter();
 
 	void registerVideoStream(not_null<GroupCall*> call);
+	[[nodiscard]] bool hasActiveMediaForVless() const;
+	[[nodiscard]] bool preventGroupCallForVless(
+		std::shared_ptr<Ui::Show> show = nullptr) const;
 
 	[[nodiscard]] bool isSharingScreen() const;
 	[[nodiscard]] bool isQuitPrevent();
@@ -175,6 +181,7 @@ private:
 		Group::JoinInfo info,
 		const MTPInputGroupCall &inputCall);
 	void destroyGroupCall(not_null<GroupCall*> call);
+	void stopGroupCallsForVless();
 	void confirmLeaveCurrent(
 		std::shared_ptr<Ui::Show> show,
 		not_null<PeerData*> peer,
@@ -230,6 +237,8 @@ private:
 	base::flat_map<
 		not_null<Main::Session*>,
 		std::vector<base::weak_ptr<GroupCall>>> _streams;
+
+	rpl::lifetime _lifetime;
 
 };
 

@@ -2223,7 +2223,9 @@ object_ptr<Ui::BoxContent> ProxiesBoxController::vlessProxyBox() {
 					box->setCloseByOutsideClick(true);
 					field->showError();
 					const auto text
-						= (error == Core::VlessError::InvalidProfile)
+						= (error == Core::VlessError::CallsActive)
+						? tr::lng_proxy_vless_calls_active(tr::now)
+						: (error == Core::VlessError::InvalidProfile)
 						? tr::lng_proxy_vless_invalid(tr::now)
 						: ((error == Core::VlessError::SidecarNotFound
 							|| error == Core::VlessError::SidecarNotExecutable

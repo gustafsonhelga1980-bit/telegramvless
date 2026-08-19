@@ -37,6 +37,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <tgcalls/VideoCaptureInterface.h>
 #include <tgcalls/StaticThreads.h>
 
+#include <QtNetwork/QHostAddress>
+
+#include <limits>
+
 namespace tgcalls {
 class InstanceImpl;
 class InstanceV2Impl;
@@ -51,6 +55,7 @@ constexpr auto kHangupTimeoutMs = 5000;
 constexpr auto kSha256Size = 32;
 constexpr auto kAuthKeySize = 256;
 const auto kDefaultVersion = "2.4.4"_q;
+const auto kManagedVlessVersion = "13.0.0"_q;
 
 const auto Register = tgcalls::Register<tgcalls::InstanceImpl>();
 const auto RegisterV2 = tgcalls::Register<tgcalls::InstanceV2Impl>();
@@ -167,6 +172,134 @@ void AppendServer(
 	});
 }
 
+[[nodiscard]] bool IsManagedVlessCredential(const QString &value) {
+	if (value.isEmpty() || value.size() > 255) {
+		return false;
+	}
+	for (const auto character : value) {
+		if (character.unicode() == 0 || character.unicode() >= 128) {
+			return false;
+		}
+	}
+	return true;
+}
+
+[[nodiscard]] bool IsManagedVlessProxy(const MTP::ProxyData &proxy) {
+	using Type = MTP::ProxyData::Type;
+	return proxy.type == Type::Socks5
+		&& proxy.host == u"127.0.0.1"_q
+		&& proxy.port > 0
+		&& proxy.port <= std::numeric_limits<uint16>::max()
+		&& IsManagedVlessCredential(proxy.user)
+		&& IsManagedVlessCredential(proxy.password);
+}
+
+[[nodiscard]] bool IsPrivateOrLinkLocal(const QHostAddress &address) {
+	if (address.protocol() == QAbstractSocket::IPv4Protocol) {
+		const auto ip = address.toIPv4Address();
+		return (ip & 0xFF000000U) == 0x0A000000U
+			|| (ip & 0xFFF00000U) == 0xAC100000U
+			|| (ip & 0xFFFF0000U) == 0xC0A80000U
+			|| (ip & 0xFFFF0000U) == 0xA9FE0000U
+			|| (ip & 0xFFC00000U) == 0x64400000U;
+	}
+	return address.isLinkLocal()
+		|| address.isSiteLocal()
+		|| address.isUniqueLocalUnicast();
+}
+
+[[nodiscard]] bool IsSafeReflectorAddress(
+		const QString &host,
+		QAbstractSocket::NetworkLayerProtocol protocol) {
+	auto address = QHostAddress();
+	return address.setAddress(host)
+		&& address.protocol() == protocol
+		&& !address.isNull()
+		&& !address.isLoopback()
+		&& !address.isMulticast()
+		&& !IsPrivateOrLinkLocal(address)
+		&& address != QHostAddress(QHostAddress::AnyIPv4)
+		&& address != QHostAddress(QHostAddress::AnyIPv6)
+		&& address != QHostAddress(QHostAddress::Broadcast);
+}
+
+[[nodiscard]] bool IsManagedTcpReflector(
+		const MTPDphoneConnection &data) {
+	const auto port = data.vport().v;
+	return data.is_tcp()
+		&& data.vpeer_tag().v.size() == 16
+		&& port > 0
+		&& port <= std::numeric_limits<uint16>::max()
+		&& (IsSafeReflectorAddress(
+			data.vip().v,
+			QAbstractSocket::IPv4Protocol)
+			|| IsSafeReflectorAddress(
+				data.vipv6().v,
+				QAbstractSocket::IPv6Protocol));
+}
+
+[[nodiscard]] base::flat_set<int64> CollectManagedTcpReflectorIds(
+		const QVector<MTPPhoneConnection> &list) {
+	auto result = base::flat_set<int64>();
+	result.reserve(list.size());
+	for (const auto &connection : list) {
+		connection.match([&](const MTPDphoneConnection &data) {
+			if (IsManagedTcpReflector(data)) {
+				result.emplace(int64(data.vid().v));
+			}
+		}, [](const MTPDphoneConnectionWebrtc &) {
+		});
+	}
+	return result;
+}
+
+void AppendManagedTcpReflector(
+		std::vector<tgcalls::RtcServer> &list,
+		const MTPPhoneConnection &connection,
+		const base::flat_set<int64> &ids) {
+	connection.match([&](const MTPDphoneConnection &data) {
+		if (!IsManagedTcpReflector(data)) {
+			return;
+		}
+		const auto i = ids.find(int64(data.vid().v));
+		if (i == end(ids) || (i - begin(ids)) >= 255) {
+			return;
+		}
+		const auto tag = data.vpeer_tag().v;
+		const auto hex = [](const QByteArray &value) {
+			const auto digit = [](uchar c) {
+				return char((c < 10) ? ('0' + c) : ('a' + c - 10));
+			};
+			auto result = std::string();
+			result.reserve(value.size() * 2);
+			for (const auto ch : value) {
+				result += digit(uchar(ch) / 16);
+				result += digit(uchar(ch) % 16);
+			}
+			return result;
+		};
+		const auto append = [&](const QString &host) {
+			const auto address = QHostAddress(host);
+			const auto protocol = address.protocol();
+			if (!IsSafeReflectorAddress(host, protocol)) {
+				return;
+			}
+			list.push_back(tgcalls::RtcServer{
+				.id = uint8((i - begin(ids)) + 1),
+				.host = host.toStdString(),
+				.port = uint16(data.vport().v),
+				.login = "reflector",
+				.password = hex(tag),
+				.isTurn = true,
+				.isTcp = true,
+			});
+		};
+		append(data.vip().v);
+		append(data.vipv6().v);
+	}, [](const MTPDphoneConnectionWebrtc &) {
+	});
+}
+
 constexpr auto kFingerprintDataSize = 256;
 uint64 ComputeFingerprint(bytes::const_span authKey) {
 	Expects(authKey.size() == kFingerprintDataSize);
@@ -191,8 +324,23 @@ uint64 ComputeFingerprint(bytes::const_span authKey) {
 	}) | ranges::to<QVector<MTPstring>>;
 }
 
-[[nodiscard]] QVector<MTPstring> CollectVersionsForApi() {
+[[nodiscard]] QVector<MTPstring> CollectVersionsForApi(bool managedVless) {
+	if (managedVless) {
+		return { MTP_string(kManagedVlessVersion.toStdString()) };
+	}
 	return WrapVersions(tgcalls::Meta::Versions() | ranges::actions::reverse);
+}
+
+[[nodiscard]] MTPPhoneCallProtocol PrepareCallProtocol(bool managedVless) {
+	using Flag = MTPDphoneCallProtocol::Flag;
+	const auto flags = managedVless
+		? MTPDphoneCallProtocol::Flags(Flag::f_udp_reflector)
+		: (Flag::f_udp_p2p | Flag::f_udp_reflector);
+	return MTP_phoneCallProtocol(
+		MTP_flags(flags),
+		MTP_int(kMinLayer),
+		MTP_int(tgcalls::Meta::MaxLayer()),
+		MTP_vector(CollectVersionsForApi(managedVless)));
 }
 
 [[nodiscard]] Webrtc::VideoState StartVideoState(bool enabled) {
@@ -234,6 +382,7 @@ Call::Call(
 , _videoOutgoing(
 	std::make_unique<Webrtc::VideoTrack>(
 		StartVideoState(video))) {
+	setupManagedVless();
 	if (_type == Type::Outgoing) {
 		setState(State::WaitingUserConfirmation);
 	} else {
@@ -284,6 +433,7 @@ Call::Call(
 , _videoOutgoing(
 	std::make_unique<Webrtc::VideoTrack>(
 		StartVideoState(video))) {
+	setupManagedVless();
 	startWaitingTrack();
 	setupOutgoingVideo();
 }
@@ -317,6 +467,9 @@ bool Call::isIncomingWaiting() const {
 
 void Call::start(bytes::const_span random) {
 	Expects(!conferenceInvite());
+	if (!ensureManagedVlessRoute()) {
+		return;
+	}
 
 	// Save config here, because it is possible that it changes between
 	// different usages inside the same call.
@@ -343,6 +496,9 @@ void Call::startOutgoing() {
 	Expects(_state.current() == State::Requesting);
 	Expects(_gaHash.size() == kSha256Size);
 	Expects(!conferenceInvite());
+	if (!ensureManagedVlessRoute()) {
+		return;
+	}
 
 	const auto flags = _videoCapture
 		? MTPphone_RequestCall::Flag::f_video
@@ -352,12 +508,7 @@ void Call::startOutgoing() {
 		_user->inputUser(),
 		MTP_int(base::RandomValue<int32>()),
 		MTP_bytes(_gaHash),
-		MTP_phoneCallProtocol(
-			MTP_flags(MTPDphoneCallProtocol::Flag::f_udp_p2p
-				| MTPDphoneCallProtocol::Flag::f_udp_reflector),
-			MTP_int(kMinLayer),
-			MTP_int(tgcalls::Meta::MaxLayer()),
-			MTP_vector(CollectVersionsForApi()))
+		PrepareCallProtocol(_managedVlessIntent)
 	)).done([=](const MTPphone_PhoneCall &result) {
 		Expects(result.type() == mtpc_phone_phoneCall);
 
@@ -397,6 +548,9 @@ void Call::startIncoming() {
 	Expects(_type == Type::Incoming);
 	Expects(_state.current() == State::Starting);
 	Expects(!conferenceInvite());
+	if (!ensureManagedVlessRoute()) {
+		return;
+	}
 
 	_api.request(MTPphone_ReceivedCall(
 		MTP_inputPhoneCall(MTP_long(_id), MTP_long(_accessHash))
@@ -411,6 +565,9 @@ void Call::startIncoming() {
 
 void Call::applyUserConfirmation() {
 	Expects(!conferenceInvite());
+	if (!ensureManagedVlessRoute()) {
+		return;
+	}
 
 	if (_state.current() == State::WaitingUserConfirmation) {
 		setState(State::Requesting);
@@ -418,6 +575,12 @@ void Call::applyUserConfirmation() {
 }
 
 void Call::answer() {
+	if (!ensureManagedVlessRoute()) {
+		return;
+	} else if (conferenceInvite() && _managedVlessIntent) {
+		failManagedVlessRoute();
+		return;
+	}
 	const auto video = isSharingVideo();
 	_delegate->callRequestPermissionsOrFail(crl::guard(this, [=] {
 		actuallyAnswer();
@@ -434,6 +597,12 @@ StartConferenceInfo Call::migrateConferenceInfo(StartConferenceInfo extend) {
 
 void Call::acceptConferenceInvite() {
 	Expects(conferenceInvite());
+	if (_managedVlessIntent
+		|| _managedVlessRouteFailed
+		|| Core::App().settings().proxy().vlessEnabled()) {
+		failManagedVlessRoute();
+		return;
+	}
 
 	if (_state.current() != State::WaitingIncoming) {
 		return;
@@ -463,6 +632,9 @@ void Call::acceptConferenceInvite() {
 
 void Call::actuallyAnswer() {
 	Expects(_type == Type::Incoming);
+	if (!ensureManagedVlessRoute()) {
+		return;
+	}
 
 	if (conferenceInvite()) {
 		acceptConferenceInvite();
@@ -486,12 +658,7 @@ void Call::actuallyAnswer() {
 	_api.request(MTPphone_AcceptCall(
 		MTP_inputPhoneCall(MTP_long(_id), MTP_long(_accessHash)),
 		MTP_bytes(_gb),
-		MTP_phoneCallProtocol(
-			MTP_flags(MTPDphoneCallProtocol::Flag::f_udp_p2p
-				| MTPDphoneCallProtocol::Flag::f_udp_reflector),
-			MTP_int(kMinLayer),
-			MTP_int(tgcalls::Meta::MaxLayer()),
-			MTP_vector(CollectVersionsForApi()))
+		PrepareCallProtocol(_managedVlessIntent)
 	)).done([=](const MTPphone_PhoneCall &result) {
 		Expects(result.type() == mtpc_phone_phoneCall);
 
@@ -648,6 +815,8 @@ void Call::redial() {
 
 	if (_state.current() != State::Busy) {
 		return;
+	} else if (!ensureManagedVlessRoute()) {
+		return;
 	}
 	Assert(_instance == nullptr);
 	_type = Type::Outgoing;
@@ -676,6 +845,9 @@ void Call::startWaitingTrack() {
 
 void Call::sendSignalingData(const QByteArray &data) {
 	Expects(!conferenceInvite());
+	if (!ensureManagedVlessRoute()) {
+		return;
+	}
 
 	_api.request(MTPphone_SendSignalingData(
 		MTP_inputPhoneCall(
@@ -876,6 +1048,12 @@ bool Call::handleUpdate(const MTPPhoneCall &call) {
 
 void Call::finishByMigration(const QString &slug) {
 	Expects(!conferenceInvite());
+	if (_managedVlessIntent
+		|| _managedVlessRouteFailed
+		|| Core::App().settings().proxy().vlessEnabled()) {
+		failManagedVlessRoute();
+		return;
+	}
 
 	if (_state.current() == State::MigrationHangingUp) {
 		return;
@@ -929,6 +1107,9 @@ void Call::updateRemoteMediaState(
 
 bool Call::handleSignalingData(
 		const MTPDupdatePhoneCallSignalingData &data) {
+	if (!ensureManagedVlessRoute()) {
+		return false;
+	}
 	if (data.vphone_call_id().v != _id || !_instance) {
 		return false;
 	}
@@ -944,6 +1125,9 @@ bool Call::handleSignalingData(
 void Call::confirmAcceptedCall(const MTPDphoneCallAccepted &call) {
 	Expects(_type == Type::Outgoing);
 	Expects(!conferenceInvite());
+	if (!ensureManagedVlessRoute()) {
+		return;
+	}
 
 	if (_state.current() == State::ExchangingKeys
 		|| _instance) {
@@ -970,12 +1154,7 @@ void Call::confirmAcceptedCall(const MTPDphoneCallAccepted &call) {
 		MTP_inputPhoneCall(MTP_long(_id), MTP_long(_accessHash)),
 		MTP_bytes(_ga),
 		MTP_long(_keyFingerprint),
-		MTP_phoneCallProtocol(
-			MTP_flags(MTPDphoneCallProtocol::Flag::f_udp_p2p
-				| MTPDphoneCallProtocol::Flag::f_udp_reflector),
-			MTP_int(kMinLayer),
-			MTP_int(tgcalls::Meta::MaxLayer()),
-			MTP_vector(CollectVersionsForApi()))
+		PrepareCallProtocol(_managedVlessIntent)
 	)).done([=](const MTPphone_PhoneCall &result) {
 		Expects(result.type() == mtpc_phone_phoneCall);
 
@@ -997,6 +1176,9 @@ void Call::confirmAcceptedCall(const MTPDphoneCallAccepted &call) {
 void Call::startConfirmedCall(const MTPDphoneCall &call) {
 	Expects(_type == Type::Incoming);
 	Expects(!conferenceInvite());
+	if (!ensureManagedVlessRoute()) {
+		return;
+	}
 
 	const auto firstBytes = bytes::make_span(call.vg_a_or_b().v);
 	if (_gaHash != openssl::Sha256(firstBytes)) {
@@ -1024,13 +1206,18 @@ void Call::startConfirmedCall(const MTPDphoneCall &call) {
 
 void Call::createAndStartController(const MTPDphoneCall &call) {
 	Expects(!conferenceInvite());
+	if (!ensureManagedVlessRoute()) {
+		return;
+	}
 
 	_discardByTimeoutTimer.cancel();
 	if (!checkCallFields(call) || _authKey.size() != kAuthKeySize) {
 		return;
 	}
 
-	_conferenceSupported = call.is_conference_supported();
+	_conferenceSupported = _managedVlessIntent
+		? false
+		: call.is_conference_supported();
 
 	const auto &protocol = call.vprotocol().c_phoneCallProtocol();
 	const auto &serverConfig = _user->session().serverConfig();
@@ -1044,10 +1231,18 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 			const MTPDphoneCallProtocol &data) {
 		return data.vlibrary_versions().v;
 	}).value(0, MTP_bytes(kDefaultVersion)).v;
+	if (_managedVlessIntent
+		&& (protocol.vlibrary_versions().v.size() != 1
+			|| version != kManagedVlessVersion)) {
+		LOG(("Call Error: Managed VLESS protocol negotiation failed."));
+		finish(FinishType::Failed);
+		return;
+	}
+	const auto allowP2P = !_managedVlessIntent && call.is_p2p_allowed();
 
 	LOG(("Call Info: Creating instance with version '%1', allowP2P: %2").arg(
 		QString::fromUtf8(version),
-		Logs::b(call.is_p2p_allowed())));
+		Logs::b(allowP2P)));
 
 	const auto versionString = version.toStdString();
 	const auto &settings = Core::App().settings();
@@ -1087,7 +1282,7 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 				= serverConfig.callConnectTimeoutMs / 1000.,
 			.receiveTimeout = serverConfig.callPacketTimeoutMs / 1000.,
 			.dataSaving = tgcalls::DataSaving::Never,
-			.enableP2P = call.is_p2p_allowed(),
+			.enableP2P = allowP2P,
 			.enableAEC = false,
 			.enableNS = true,
 			.enableAGC = true,
@@ -1157,26 +1352,52 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 		QDir().mkpath(callLogFolder);
 	}
 
-	const auto ids = CollectEndpointIds(call.vconnections().v);
-	for (const auto &connection : call.vconnections().v) {
-		AppendEndpoint(descriptor.endpoints, connection);
-	}
-	for (const auto &connection : call.vconnections().v) {
-		AppendServer(descriptor.rtcServers, connection, ids);
+	if (_managedVlessIntent) {
+		const auto ids = CollectManagedTcpReflectorIds(call.vconnections().v);
+		for (const auto &connection : call.vconnections().v) {
+			AppendManagedTcpReflector(
+				descriptor.rtcServers,
+				connection,
+				ids);
+		}
+		if (descriptor.rtcServers.empty()) {
+			LOG(("Call Error: No managed VLESS TCP reflectors."));
+			finish(FinishType::Failed);
+			return;
+		}
+	} else {
+		const auto ids = CollectEndpointIds(call.vconnections().v);
+		for (const auto &connection : call.vconnections().v) {
+			AppendEndpoint(descriptor.endpoints, connection);
+		}
+		for (const auto &connection : call.vconnections().v) {
+			AppendServer(descriptor.rtcServers, connection, ids);
+		}
 	}
 
 	{
-		const auto &settingsProxy = Core::App().settings().proxy();
-		using ProxyData = MTP::ProxyData;
-		if (settingsProxy.useProxyForCalls() && settingsProxy.isEnabled()) {
-			const auto &selected = settingsProxy.selected();
-			if (selected.supportsCalls() && !selected.host.isEmpty()) {
-				Assert(selected.type == ProxyData::Type::Socks5);
-				descriptor.proxy = std::make_unique<tgcalls::Proxy>();
-				descriptor.proxy->host = selected.host.toStdString();
-				descriptor.proxy->port = selected.port;
-				descriptor.proxy->login = selected.user.toStdString();
-				descriptor.proxy->password = selected.password.toStdString();
+		if (_managedVlessIntent) {
+			descriptor.proxy = std::make_unique<tgcalls::Proxy>();
+			descriptor.proxy->host = _managedVlessProxy.host.toStdString();
+			descriptor.proxy->port = uint16(_managedVlessProxy.port);
+			descriptor.proxy->login = _managedVlessProxy.user.toStdString();
+			descriptor.proxy->password
+				= _managedVlessProxy.password.toStdString();
+		} else {
+			const auto &settingsProxy = Core::App().settings().proxy();
+			using ProxyData = MTP::ProxyData;
+			if (settingsProxy.useProxyForCalls()
+				&& settingsProxy.isEnabled()) {
+				const auto &selected = settingsProxy.selected();
+				if (selected.supportsCalls() && !selected.host.isEmpty()) {
+					Assert(selected.type == ProxyData::Type::Socks5);
+					descriptor.proxy = std::make_unique<tgcalls::Proxy>();
+					descriptor.proxy->host = selected.host.toStdString();
+					descriptor.proxy->port = selected.port;
+					descriptor.proxy->login = selected.user.toStdString();
+					descriptor.proxy->password
+						= selected.password.toStdString();
+				}
 			}
 		}
 	}
@@ -1509,6 +1730,63 @@ rpl::producer<Webrtc::DeviceResolvedId> Call::cameraDeviceIdValue() const {
 	return _cameraDeviceId.value();
 }
 
+void Call::setupManagedVless() {
+	const auto &settings = Core::App().settings().proxy();
+	_managedVlessIntent = settings.vlessEnabled();
+	if (_managedVlessIntent) {
+		const auto selected = settings.selected();
+		if (settings.isEnabled()
+			&& Core::App().vlessProxyRunning()
+			&& IsManagedVlessProxy(selected)) {
+			_managedVlessProxy = selected;
+		}
+	}
+	Core::App().proxyChanges(
+	) | rpl::on_next([=](const Core::Application::ProxyChange &) {
+		const auto vlessEnabled
+			= Core::App().settings().proxy().vlessEnabled();
+		if ((_managedVlessIntent && !managedVlessRouteAvailable())
+			|| (!_managedVlessIntent && vlessEnabled)) {
+			failManagedVlessRoute();
+		}
+	}, _lifetime);
+}
+
+bool Call::managedVlessRouteAvailable() const {
+	if (!_managedVlessIntent || !IsManagedVlessProxy(_managedVlessProxy)) {
+		return false;
+	}
+	const auto &settings = Core::App().settings().proxy();
+	return settings.vlessEnabled()
+		&& settings.isEnabled()
+		&& Core::App().vlessProxyRunning()
+		&& settings.selected() == _managedVlessProxy;
+}
+
+bool Call::ensureManagedVlessRoute() {
+	if (_managedVlessRouteFailed) {
+		return false;
+	} else if (_managedVlessIntent && managedVlessRouteAvailable()) {
+		return true;
+	} else if (!_managedVlessIntent
+		&& !Core::App().settings().proxy().vlessEnabled()) {
+		return true;
+	}
+	failManagedVlessRoute();
+	return false;
+}
+
+void Call::failManagedVlessRoute() {
+	if (_managedVlessRouteFailed) {
+		return;
+	}
+	_managedVlessRouteFailed = true;
+	destroyController();
+	_managedVlessProxy = MTP::ProxyData();
+	LOG(("Call Error: Managed VLESS route unavailable or changed."));
+	finish(FinishType::Failed);
+}
+
 void Call::finish(
 		FinishType type,
 		const MTPPhoneCallDiscardReason &reason,
@@ -1655,11 +1933,22 @@ void Call::destroyController() {
 	}
 
 	if (_instance) {
+		auto done = Core::App().calls().addAsyncWaiter();
+		auto mediaDone = AddMediaTeardownWaiter();
 		_instance->stop([](tgcalls::FinalState) {
 		});
 
 		DEBUG_LOG(("Call Info: Destroying call controller.."));
 		_instance.reset();
+		auto completion = std::make_shared<FnMut<void()>>([
+				done = std::move(done),
+				mediaDone = std::move(mediaDone)]() mutable {
+			mediaDone();
+			done();
+		});
+		tgcalls::PostCallTeardownBarrier([completion] {
+			(*completion)();
+		});
 		DEBUG_LOG(("Call Info: Call controller destroyed."));
 	}
 	setSignalBarCount(kSignalBarFinished);

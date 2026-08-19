@@ -949,6 +949,10 @@ void Application::setCurrentVlessProxy(
 		done(VlessError::ConfigurationFailed);
 		return;
 	}
+	if (calls().hasActiveMediaForVless()) {
+		done(VlessError::CallsActive);
+		return;
+	}
 	_private->vlessChanging = true;
 	settings().proxy().connectionTypeChangesNotify();
 	_private->vlessManager->prepare(url, [=](VlessStartResult result) {
@@ -956,6 +960,13 @@ void Application::setCurrentVlessProxy(
 			_private->vlessChanging = false;
 			settings().proxy().connectionTypeChangesNotify();
 			done(result.error);
+			return;
+		}
+		if (calls().hasActiveMediaForVless()) {
+			_private->vlessManager->cancel();
+			_private->vlessChanging = false;
+			settings().proxy().connectionTypeChangesNotify();
+			done(VlessError::CallsActive);
 			return;
 		}
 		const auto previous = _private->vlessUrl;

@@ -7,11 +7,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "base/weak_ptr.h"
-#include "base/timer.h"
 #include "base/bytes.h"
-#include "mtproto/sender.h"
+#include "base/timer.h"
+#include "base/weak_ptr.h"
 #include "mtproto/mtproto_auth_key.h"
+#include "mtproto/mtproto_proxy_data.h"
+#include "mtproto/sender.h"
 #include "webrtc/webrtc_device_resolver.h"
 #include "webrtc/webrtc_system_audio_capture.h"
 
@@ -314,6 +315,10 @@ private:
 	void setFailedQueued(const QString &error);
 	void setSignalBarCount(int count);
 	void destroyController();
+	void setupManagedVless();
+	[[nodiscard]] bool managedVlessRouteAvailable() const;
+	[[nodiscard]] bool ensureManagedVlessRoute();
+	void failManagedVlessRoute();
 
 	void captureMuteChanged(bool mute) override;
 	rpl::producer<Webrtc::DeviceResolvedId> captureMuteDeviceId() override;
@@ -330,7 +335,10 @@ private:
 	const not_null<Delegate*> _delegate;
 	const not_null<UserData*> _user;
 	MTP::Sender _api;
+	MTP::ProxyData _managedVlessProxy;
 	Type _type = Type::Outgoing;
+	bool _managedVlessIntent = false;
+	bool _managedVlessRouteFailed = false;
 	rpl::variable<State> _state = State::Starting;
 	rpl::variable<bool> _conferenceSupported = false;
 	rpl::variable<RemoteAudioState> _remoteAudioState
