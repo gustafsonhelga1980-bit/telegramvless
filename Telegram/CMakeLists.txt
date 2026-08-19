@@ -534,6 +534,8 @@ PRIVATE
     core/application.h
     core/proxy_rotation_manager.cpp
     core/proxy_rotation_manager.h
+    core/vless_manager.cpp
+    core/vless_manager.h
     core/vless_profile.cpp
     core/vless_profile.h
     core/cached_webview_availability.h
