@@ -83,12 +83,14 @@ public:
 	void applyItem(int id);
 	object_ptr<Ui::BoxContent> editItemBox(int id);
 	object_ptr<Ui::BoxContent> addNewItemBox();
+	object_ptr<Ui::BoxContent> vlessProxyBox();
 	bool setProxySettings(ProxyData::Settings value);
 	void setProxyForCalls(bool enabled);
 	void setProxyRotationEnabled(bool enabled);
 	void setProxyRotationTimeout(int value);
 	void setTryIPv6(bool enabled);
 	rpl::producer<ProxyData::Settings> proxySettingsValue() const;
+	rpl::producer<QString> vlessStateValue() const;
 
 	[[nodiscard]] bool contains(const ProxyData &proxy) const;
 	void addNewItem(const ProxyData &proxy);
@@ -134,6 +136,7 @@ private:
 	rpl::event_stream<ItemView> _views;
 	base::Timer _saveTimer;
 	rpl::event_stream<ProxyData::Settings> _proxySettingsChanges;
+	rpl::event_stream<> _vlessStateChanges;
 	std::shared_ptr<Ui::Show> _show;
 
 	ProxyData _lastSelectedProxy;

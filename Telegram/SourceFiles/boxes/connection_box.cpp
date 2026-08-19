@@ -15,8 +15,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/local_url_handlers.h"
+#include "core/vless_manager.h"
 #include "lang/lang_keys.h"
 #include "main/main_account.h"
+#include "main/main_domain.h"
 #include "main/main_session.h"
 #include "mtproto/facade.h"
 #include "mtproto/mtproto_config.h"
@@ -24,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "qr/qr_generate.h"
 #include "settings/settings_common.h"
 #include "storage/localstorage.h"
+#include "storage/storage_domain.h"
 #include "ui/basic_click_handlers.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/boxes/peer_qr_box.h"
@@ -1108,6 +1111,17 @@ void ProxiesBox::setupTopButton() {
 void ProxiesBox::setupContent() {
 	const auto inner = setInnerWidget(object_ptr<Ui::VerticalLayout>(this));
 
+	const auto vlessProxyButton = Settings::AddButtonWithLabel(
+		inner,
+		tr::lng_proxy_vless(),
+		_controller->vlessStateValue(),
+		st::settingsButton,
+		{ &st::menuIconNetwork });
+	vlessProxyButton->setClickedCallback([=] {
+		getDelegate()->show(_controller->vlessProxyBox());
+	});
+	Ui::AddSkip(inner);
+
 	_tryIPv6 = inner->add(
 		object_ptr<Ui::Checkbox>(
 			inner,
@@ -1305,6 +1319,7 @@ void ProxiesBox::refreshProxyRotation() {
 	}
 	const auto visible = (_proxySettings->current()
 			== ProxyData::Settings::Enabled)
+		&& !_settings.vlessEnabled()
 		&& _settings.selected()
 		&& (_settings.list().size() > 1);
 	_proxyRotation->toggle(visible, anim::type::normal);
@@ -1709,9 +1724,9 @@ ProxiesBoxController::ProxiesBoxController(not_null<Main::Account*> account)
 	_settings.connectionTypeChanges(
 	) | rpl::on_next([=] {
 		_proxySettingsChanges.fire_copy(_settings.settings());
-		const auto i = findByProxy(_settings.selected());
-		if (i != end(_list)) {
-			updateView(*i);
+		_vlessStateChanges.fire({});
+		for (const auto &item : _list) {
+			updateView(item);
 		}
 	}, _lifetime);
 
@@ -2004,6 +2019,24 @@ auto ProxiesBoxController::proxySettingsValue() const
 	) | rpl::distinct_until_changed();
 }
 
+rpl::producer<QString> ProxiesBoxController::vlessStateValue() const {
+	return _vlessStateChanges.events_starting_with(
+		rpl::empty_value()
+	) | rpl::map([=] {
+		if (Core::App().vlessProxyChanging()) {
+			return tr::lng_proxy_connecting(tr::now);
+		}
+		if (!_settings.vlessEnabled()) {
+			return Core::App().vlessUrl().isEmpty()
+				? tr::lng_proxy_vless_not_configured(tr::now)
+				: tr::lng_proxy_vless_configured(tr::now);
+		}
+		return Core::App().vlessProxyRunning()
+			? tr::lng_proxy_vless_active(tr::now)
+			: tr::lng_proxy_vless_unavailable(tr::now);
+	}) | rpl::distinct_until_changed();
+}
+
 void ProxiesBoxController::refreshChecker(Item &item) {
 	item.state = ItemState::Checking;
 	const auto id = item.id;
@@ -2143,6 +2176,87 @@ void ProxiesBoxController::applyItem(int id) {
 		updateView(*j);
 	}
 	updateView(*item);
+}
+
+object_ptr<Ui::BoxContent> ProxiesBoxController::vlessProxyBox() {
+	const auto current = Core::App().vlessUrl();
+	return Box([=](not_null<Ui::GenericBox*> box) {
+		box->setTitle(tr::lng_proxy_vless());
+		const auto field = box->addRow(object_ptr<Ui::InputField>(
+			box,
+			st::connectionPasswordInputField,
+			Ui::InputField::Mode::SingleLine,
+			tr::lng_proxy_vless_url(),
+			current));
+		field->setMaxLength(8192);
+		box->addRow(object_ptr<Ui::FlatLabel>(
+			box,
+			tr::lng_proxy_vless_about(),
+			st::boxLabel));
+		if (!_account->domain().local().hasLocalPasscode()) {
+			box->addRow(object_ptr<Ui::FlatLabel>(
+				box,
+				tr::lng_proxy_vless_passcode_about(),
+				st::boxLabel));
+		}
+		box->setFocusCallback([=] { field->setFocusFast(); });
+		const auto save = box->addButton(tr::lng_connection_save(), [] {});
+		const auto cancel = box->addButton(tr::lng_cancel(), [] {});
+		cancel->setClickedCallback([=] {
+			if (!save->isDisabled()) {
+				box->closeBox();
+			}
+		});
+		save->setClickedCallback([=] {
+			if (save->isDisabled()) {
+				return;
+			}
+			const auto url = field->getLastText().trimmed();
+			save->clearState();
+			save->setDisabled(true);
+			cancel->clearState();
+			cancel->setDisabled(true);
+			field->setDisabled(true);
+			box->setCloseByEscape(false);
+			box->setCloseByOutsideClick(false);
+			Core::App().setCurrentVlessProxy(
+				url,
+				crl::guard(box, [=](Core::VlessError error) {
+					save->setDisabled(false);
+					cancel->setDisabled(false);
+					field->setDisabled(false);
+					if (error == Core::VlessError::None) {
+						box->closeBox();
+						return;
+					}
+					box->setCloseByEscape(true);
+					box->setCloseByOutsideClick(true);
+					field->showError();
+					const auto text
+						= (error == Core::VlessError::InvalidProfile)
+						? tr::lng_proxy_vless_invalid(tr::now)
+						: ((error == Core::VlessError::SidecarNotFound
+							|| error == Core::VlessError::SidecarNotExecutable
+							|| error == Core::VlessError::SidecarNotTrusted)
+							? tr::lng_proxy_vless_xray_missing(tr::now)
+							: tr::lng_proxy_vless_start_failed(tr::now));
+					box->uiShow()->showToast(text);
+				}));
+		});
+		if (!current.isEmpty()) {
+			box->addLeftButton(tr::lng_box_remove(), [=] {
+				if (save->isDisabled()) {
+					return;
+				}
+				if (Core::App().clearVlessProxy()) {
+					box->closeBox();
+				} else {
+					box->uiShow()->showToast(
+						tr::lng_proxy_vless_remove_failed(tr::now));
+				}
+			});
+		}
+	});
 }
 
 void ProxiesBoxController::setDeleted(int id, bool deleted) {
