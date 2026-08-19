@@ -28,6 +28,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/local_url_handlers.h"
 #include "core/launcher.h"
 #include "core/proxy_rotation_manager.h"
+#include "core/vless_manager.h"
 #include "core/ui_integration.h"
 #include "core/version.h"
 #include "chat_helpers/emoji_keywords.h"
@@ -150,6 +151,9 @@ struct Application::Private {
 	UiIntegration uiIntegration;
 	Settings settings;
 	std::unique_ptr<ProxyRotationManager> proxyRotation;
+	std::unique_ptr<VlessManager> vlessManager;
+	QString vlessUrl;
+	bool vlessChanging = false;
 };
 
 Application::Application()
@@ -178,6 +182,11 @@ Application::Application()
 , _autoLockTimer([=] { checkAutoLock(); }) {
 	Ui::Integration::Set(&_private->uiIntegration);
 	_private->proxyRotation = std::make_unique<ProxyRotationManager>();
+	_private->vlessManager = std::make_unique<VlessManager>();
+	_private->vlessManager->failures(
+	) | rpl::on_next([=](VlessError) {
+		vlessProxyFailed();
+	}, _lifetime);
 
 	_platformIntegration->init();
 
@@ -241,6 +250,7 @@ Application::~Application() {
 	closeAdditionalWindows();
 
 	_private->proxyRotation = nullptr;
+	_private->vlessManager = nullptr;
 	_domain->finish();
 
 	Local::finish();
@@ -269,6 +279,16 @@ void Application::run() {
 	_notifications = std::make_unique<Window::Notifications::System>();
 
 	startLocalStorage();
+	auto &proxy = settings().proxy();
+	const auto vlessEnabled = proxy.vlessEnabled()
+		|| settings().readPref<bool>(kVlessProxyEnabledKey);
+	proxy.setVlessEnabled(vlessEnabled);
+	settings().writePref<bool>(kVlessProxyEnabledKey, vlessEnabled);
+	if (vlessEnabled) {
+		proxy.setSelected(VlessProxySink());
+		proxy.setSettings(MTP::ProxyData::Settings::Enabled);
+		Local::writeSettings();
+	}
 
 	style::SetCustomFont(settings().customFontFamily());
 	style::internal::StartFonts();
@@ -345,6 +365,17 @@ void Application::run() {
 
 	_domain->activeChanges(
 	) | rpl::on_next([=](not_null<Main::Account*> account) {
+		if (_private->vlessUrl.isEmpty()) {
+			const auto stored = _domain->local().readVlessUrl();
+			if (stored) {
+				_private->vlessUrl = *stored;
+			}
+		}
+		if (settings().proxy().vlessEnabled()
+			&& !_private->vlessUrl.isEmpty()
+			&& !_private->vlessManager->running()) {
+			startStoredVlessProxy();
+		}
 		showAccount(account);
 	}, _lifetime);
 
@@ -837,17 +868,170 @@ void Application::setCurrentProxy(
 		const MTP::ProxyData &proxy,
 		MTP::ProxyData::Settings settings) {
 	auto &my = _private->settings.proxy();
+	auto selected = proxy;
+	const auto managed = my.vlessEnabled()
+		|| _private->vlessManager->running();
+	const auto cancelPending = _private->vlessManager->busy();
+	my.setVlessEnabled(false);
+	_private->settings.writePref<bool>(kVlessProxyEnabledKey, false);
+	if (managed || cancelPending) {
+		_private->vlessManager->stop();
+	}
+	if (managed) {
+		if (selected == my.selected() && my.indexInList(selected) < 0) {
+			selected = my.list().empty()
+				? MTP::ProxyData()
+				: my.list().back();
+		}
+	}
 	const auto current = [&] {
 		return my.isEnabled() ? my.selected() : MTP::ProxyData();
 	};
 	const auto was = current();
-	my.setSelected(proxy);
+	my.setSelected(selected);
 	my.setSettings(settings);
 	const auto now = current();
 	refreshGlobalProxy();
 	_proxyChanges.fire({ was, now });
 	my.connectionTypeChangesNotify();
 	proxyRotationSettingsChanged();
+}
+
+void Application::applyVlessProxy(const MTP::ProxyData &proxy) {
+	auto &my = _private->settings.proxy();
+	const auto was = my.isEnabled() ? my.selected() : MTP::ProxyData();
+	my.setVlessEnabled(true);
+	settings().writePref<bool>(kVlessProxyEnabledKey, true);
+	my.setProxyRotationEnabled(false);
+	my.setSelected(proxy);
+	my.setSettings(MTP::ProxyData::Settings::Enabled);
+	refreshGlobalProxy();
+	_proxyChanges.fire({ was, proxy });
+	my.connectionTypeChangesNotify();
+	proxyRotationSettingsChanged();
+	Local::writeSettings();
+}
+
+void Application::startStoredVlessProxy() {
+	if (_private->vlessChanging
+		|| _private->vlessManager->busy()
+		|| _private->vlessManager->running()
+		|| _private->vlessUrl.isEmpty()
+		|| !settings().proxy().vlessEnabled()) {
+		return;
+	}
+	_private->vlessChanging = true;
+	settings().proxy().connectionTypeChangesNotify();
+	const auto requested = _private->vlessUrl;
+	_private->vlessManager->prepare(requested, [=](VlessStartResult result) {
+		_private->vlessChanging = false;
+		if (!result
+			|| !settings().proxy().vlessEnabled()
+			|| _private->vlessUrl != requested) {
+			_private->vlessManager->cancel();
+			settings().proxy().connectionTypeChangesNotify();
+			return;
+		}
+		if (_private->vlessManager->commit()) {
+			applyVlessProxy(result.proxy);
+		} else {
+			settings().proxy().connectionTypeChangesNotify();
+		}
+	});
+}
+
+void Application::setCurrentVlessProxy(
+		const QString &url,
+		Fn<void(VlessError)> done) {
+	if (!_domain->started()
+		|| _private->vlessChanging
+		|| _private->vlessManager->busy()) {
+		done(VlessError::ConfigurationFailed);
+		return;
+	}
+	_private->vlessChanging = true;
+	settings().proxy().connectionTypeChangesNotify();
+	_private->vlessManager->prepare(url, [=](VlessStartResult result) {
+		if (!result) {
+			_private->vlessChanging = false;
+			settings().proxy().connectionTypeChangesNotify();
+			done(result.error);
+			return;
+		}
+		const auto previous = _private->vlessUrl;
+		if (!_domain->local().writeVlessUrl(url)) {
+			_private->vlessManager->cancel();
+			_private->vlessChanging = false;
+			settings().proxy().connectionTypeChangesNotify();
+			done(VlessError::ConfigurationFailed);
+			return;
+		}
+		if (!_private->vlessManager->commit()) {
+			if (previous.isEmpty()) {
+				_domain->local().clearVlessUrl();
+			} else {
+				_domain->local().writeVlessUrl(previous);
+			}
+			_private->vlessChanging = false;
+			settings().proxy().connectionTypeChangesNotify();
+			done(VlessError::ProcessExited);
+			return;
+		}
+		_private->vlessUrl = url;
+		_private->vlessChanging = false;
+		applyVlessProxy(result.proxy);
+		done(VlessError::None);
+	});
+}
+
+bool Application::clearVlessProxy() {
+	if (!_domain->started()
+		|| _private->vlessChanging
+		|| !_domain->local().clearVlessUrl()) {
+		return false;
+	}
+	const auto wasEnabled = settings().proxy().vlessEnabled();
+	_private->vlessUrl.clear();
+	_private->vlessManager->stop();
+	settings().proxy().setVlessEnabled(false);
+	settings().writePref<bool>(kVlessProxyEnabledKey, false);
+	if (wasEnabled) {
+		setCurrentProxy(MTP::ProxyData(), MTP::ProxyData::Settings::System);
+	} else {
+		settings().proxy().connectionTypeChangesNotify();
+	}
+	Local::writeSettings();
+	return true;
+}
+
+void Application::vlessProxyFailed() {
+	auto &proxy = settings().proxy();
+	if (!proxy.vlessEnabled()) {
+		return;
+	}
+	const auto was = proxy.isEnabled()
+		? proxy.selected()
+		: MTP::ProxyData();
+	const auto sink = VlessProxySink();
+	proxy.setSelected(sink);
+	proxy.setSettings(MTP::ProxyData::Settings::Enabled);
+	refreshGlobalProxy();
+	_proxyChanges.fire({ was, sink });
+	proxy.connectionTypeChangesNotify();
+	proxyRotationSettingsChanged();
+	Local::writeSettings();
+}
+
+QString Application::vlessUrl() const {
+	return _private->vlessUrl;
+}
+
+bool Application::vlessProxyRunning() const {
+	return _private->vlessManager->running();
+}
+
+bool Application::vlessProxyChanging() const {
+	return _private->vlessChanging;
 }
 
 void Application::proxyRotationSettingsChanged() {
@@ -865,6 +1049,9 @@ auto Application::proxyChanges() const -> rpl::producer<ProxyChange> {
 }
 
 void Application::badMtprotoConfigurationError() {
+	if (settings().proxy().vlessEnabled()) {
+		return;
+	}
 	if (settings().proxy().isEnabled() && !_badProxyDisableBox) {
 		const auto disableCallback = [=] {
 			setCurrentProxy(

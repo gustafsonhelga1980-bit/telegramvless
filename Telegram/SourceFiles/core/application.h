@@ -114,6 +114,7 @@ namespace Core {
 struct LocalUrlHandler;
 class Settings;
 class Tray;
+enum class VlessError;
 
 enum class LaunchState {
 	Running,
@@ -220,6 +221,13 @@ public:
 	void setCurrentProxy(
 		const MTP::ProxyData &proxy,
 		MTP::ProxyData::Settings settings);
+	void setCurrentVlessProxy(
+		const QString &url,
+		Fn<void(VlessError)> done);
+	[[nodiscard]] bool clearVlessProxy();
+	[[nodiscard]] QString vlessUrl() const;
+	[[nodiscard]] bool vlessProxyRunning() const;
+	[[nodiscard]] bool vlessProxyChanging() const;
 	void proxyRotationSettingsChanged();
 	void checkProxyRotation(not_null<Main::Account*> account, int32 state);
 	[[nodiscard]] rpl::producer<ProxyChange> proxyChanges() const;
@@ -367,6 +375,9 @@ private:
 	void startSystemDarkModeViewer();
 	void startMediaView();
 	void startTray();
+	void startStoredVlessProxy();
+	void applyVlessProxy(const MTP::ProxyData &proxy);
+	void vlessProxyFailed();
 
 	void createTray();
 	void updateWindowTitles();
