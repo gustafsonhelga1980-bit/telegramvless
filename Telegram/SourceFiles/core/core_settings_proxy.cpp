@@ -108,12 +108,22 @@ std::vector<int> NormalizeProxyRotationPreferredIndices(
 
 } // namespace
 
+MTP::ProxyData VlessProxySink() {
+	return {
+		.type = MTP::ProxyData::Type::Socks5,
+		.host = u"127.0.0.1"_q,
+		.port = 9,
+	};
+}
+
 SettingsProxy::SettingsProxy()
 : _tryIPv6(!Platform::IsWindows()) {
 }
 
 QByteArray SettingsProxy::serialize() const {
-	const auto serializedSelected = SerializeProxyData(_selected);
+	const auto serializedSelected = _vlessEnabled
+		? SerializeProxyData(VlessProxySink())
+		: SerializeProxyData(_selected);
 	const auto serializedList = ranges::views::all(
 		_list
 	) | ranges::views::transform(SerializeProxyData) | ranges::to_vector;
@@ -210,6 +220,10 @@ bool SettingsProxy::setFromSerialized(const QByteArray &serialized) {
 			}
 		}
 	}
+	auto vlessEnabled = qint32(0);
+	if (!stream.atEnd()) {
+		stream >> vlessEnabled;
+	}
 
 	if (!stream.ok()) {
 		LOG(("App Error: "
@@ -223,7 +237,10 @@ bool SettingsProxy::setFromSerialized(const QByteArray &serialized) {
 	_proxyRotationEnabled = (proxyRotationEnabled == 1);
 	setProxyRotationTimeout(proxyRotationTimeout);
 	_settings = IntToProxySettings(settings);
-	_selected = DeserializeProxyData(selectedProxy);
+	_vlessEnabled = (vlessEnabled == 1);
+	_selected = _vlessEnabled
+		? VlessProxySink()
+		: DeserializeProxyData(selectedProxy);
 	_list = std::move(list);
 	setProxyRotationPreferredIndices(std::move(preferredIndices));
 
@@ -324,6 +341,14 @@ MTP::ProxyData SettingsProxy::selected() const {
 
 void SettingsProxy::setSelected(MTP::ProxyData value) {
 	_selected = value;
+}
+
+bool SettingsProxy::vlessEnabled() const {
+	return _vlessEnabled;
+}
+
+void SettingsProxy::setVlessEnabled(bool value) {
+	_vlessEnabled = value;
 }
 
 const std::vector<MTP::ProxyData> &SettingsProxy::list() const {

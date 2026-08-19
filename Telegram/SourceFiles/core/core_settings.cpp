@@ -1735,9 +1735,13 @@ void Settings::resetOnLastLogout() {
 	_storiesClickTooltipHidden = false;
 	_ttlVoiceClickTooltipHidden = false;
 	const auto srDisabled = readPref<bool>(kScreenReaderModeDisabledKey);
+	const auto vlessProxyEnabled = readPref<bool>(kVlessProxyEnabledKey);
 	_prefs.clear();
 	if (srDisabled) {
 		writePref<bool>(kScreenReaderModeDisabledKey, true);
+	}
+	if (vlessProxyEnabled) {
+		writePref<bool>(kVlessProxyEnabledKey, true);
 	}
 	_ivZoom = 0;
 	_recordVideoMessages = false;

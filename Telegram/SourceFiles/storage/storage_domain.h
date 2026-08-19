@@ -7,6 +7,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include <optional>
+
 namespace MTP {
 class Config;
 class AuthKey;
@@ -46,6 +48,10 @@ public:
 
 	[[nodiscard]] rpl::producer<> localPasscodeChanged() const;
 	[[nodiscard]] bool hasLocalPasscode() const;
+
+	[[nodiscard]] std::optional<QString> readVlessUrl() const;
+	bool writeVlessUrl(const QString &url);
+	bool clearVlessUrl();
 
 private:
 	enum class StartModernResult {

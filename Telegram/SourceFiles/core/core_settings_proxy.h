@@ -13,6 +13,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace Core {
 
+[[nodiscard]] MTP::ProxyData VlessProxySink();
+
 class SettingsProxy final {
 public:
 	static constexpr auto kProxyRotationTimeouts = std::array{
@@ -52,6 +54,9 @@ public:
 	[[nodiscard]] MTP::ProxyData selected() const;
 	void setSelected(MTP::ProxyData value);
 
+	[[nodiscard]] bool vlessEnabled() const;
+	void setVlessEnabled(bool value);
+
 	[[nodiscard]] bool checkIpWarningShown() const;
 	void setCheckIpWarningShown(bool value);
 
@@ -78,6 +83,7 @@ private:
 	bool _useProxyForCalls = false;
 	bool _proxyRotationEnabled = false;
 	bool _checkIpWarningShown = false;
+	bool _vlessEnabled = false;
 	int _proxyRotationTimeout = kDefaultProxyRotationTimeout;
 	MTP::ProxyData::Settings _settings = MTP::ProxyData::Settings::System;
 	MTP::ProxyData _selected;

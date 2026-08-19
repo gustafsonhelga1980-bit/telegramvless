@@ -30,6 +30,54 @@ using namespace details;
 	return "key_" + dataName;
 }
 
+[[nodiscard]] QString ComputeVlessName(const QString &dataName) {
+	return u"vless_"_q + dataName;
+}
+
+constexpr auto kVlessStorageVersion = qint32(1);
+constexpr auto kMaxVlessUrlBytes = 8192;
+
+[[nodiscard]] std::optional<QString> ReadVlessRecord(
+		const QString &dataName,
+		const MTP::AuthKeyPtr &localKey) {
+	auto file = FileReadDescriptor();
+	if (!ReadEncryptedFile(
+			file,
+			ComputeVlessName(dataName),
+			BaseGlobalPath(),
+			localKey)) {
+		return std::nullopt;
+	}
+	auto version = qint32();
+	auto url = QString();
+	file.stream >> version >> url;
+	if (file.stream.status() != QDataStream::Ok
+		|| !file.stream.atEnd()
+		|| version != kVlessStorageVersion
+		|| url.toUtf8().size() > kMaxVlessUrlBytes) {
+		return std::nullopt;
+	}
+	return url;
+}
+
+[[nodiscard]] bool WriteVlessRecord(
+		const QString &dataName,
+		const MTP::AuthKeyPtr &localKey,
+		const QString &url) {
+	const auto size = sizeof(qint32) + Serialize::stringSize(url);
+	auto data = EncryptedDescriptor(size);
+	data.stream << kVlessStorageVersion << url;
+	{
+		auto file = FileWriteDescriptor(
+			ComputeVlessName(dataName),
+			BaseGlobalPath(),
+			true);
+		file.writeEncrypted(data, localKey);
+	}
+	const auto stored = ReadVlessRecord(dataName, localKey);
+	return stored && (*stored == url);
+}
+
 } // namespace
 
 Domain::Domain(not_null<Main::Domain*> owner, const QString &dataName)
@@ -275,6 +323,32 @@ rpl::producer<> Domain::localPasscodeChanged() const {
 
 bool Domain::hasLocalPasscode() const {
 	return _hasLocalPasscode;
+}
+
+std::optional<QString> Domain::readVlessUrl() const {
+	Expects(_localKey != nullptr);
+
+	const auto result = ReadVlessRecord(_dataName, _localKey);
+	if (!result || result->isEmpty()) {
+		return std::nullopt;
+	}
+	return result;
+}
+
+bool Domain::writeVlessUrl(const QString &url) {
+	Expects(_localKey != nullptr);
+
+	const auto bytes = url.toUtf8();
+	if (url.isEmpty() || bytes.size() > kMaxVlessUrlBytes) {
+		return false;
+	}
+	return WriteVlessRecord(_dataName, _localKey, url);
+}
+
+bool Domain::clearVlessUrl() {
+	Expects(_localKey != nullptr);
+
+	return WriteVlessRecord(_dataName, _localKey, QString());
 }
 
 } // namespace Storage
