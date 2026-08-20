@@ -272,11 +272,18 @@ VlessManager::Private::~Private() {
 	++generation;
 	callback = nullptr;
 	clearProbe();
-	for (const auto process : findChildren<QProcess*>(
+	const auto processes = findChildren<QProcess*>(
 		QString(),
-		Qt::FindDirectChildrenOnly)) {
+		Qt::FindDirectChildrenOnly);
+	for (const auto process : processes) {
+		QObject::disconnect(process, nullptr, this, nullptr);
 		if (process->state() != QProcess::NotRunning) {
 			process->kill();
+		}
+	}
+	for (const auto process : processes) {
+		if (process->state() != QProcess::NotRunning) {
+			process->waitForFinished(kStopTimeout);
 		}
 	}
 	Wipe(config);
