@@ -54,6 +54,7 @@ constexpr auto kMinLayer = 65;
 constexpr auto kHangupTimeoutMs = 5000;
 constexpr auto kSha256Size = 32;
 constexpr auto kAuthKeySize = 256;
+constexpr auto kMaxSocksCredentialSize = 255;
 const auto kDefaultVersion = "2.4.4"_q;
 const auto kManagedVlessVersion = "13.0.0"_q;
 
@@ -173,7 +174,7 @@ void AppendServer(
 }
 
 [[nodiscard]] bool IsManagedVlessCredential(const QString &value) {
-	if (value.isEmpty() || value.size() > 255) {
+	if (value.isEmpty() || value.size() > kMaxSocksCredentialSize) {
 		return false;
 	}
 	for (const auto character : value) {
@@ -223,11 +224,10 @@ void AppendServer(
 		&& address != QHostAddress(QHostAddress::Broadcast);
 }
 
-[[nodiscard]] bool IsManagedTcpReflector(
+[[nodiscard]] bool IsManagedReflector(
 		const MTPDphoneConnection &data) {
 	const auto port = data.vport().v;
-	return data.is_tcp()
-		&& data.vpeer_tag().v.size() == 16
+	return data.vpeer_tag().v.size() == 16
 		&& port > 0
 		&& port <= std::numeric_limits<uint16>::max()
 		&& (IsSafeReflectorAddress(
@@ -238,27 +238,75 @@ void AppendServer(
 				QAbstractSocket::IPv6Protocol));
 }
 
-[[nodiscard]] base::flat_set<int64> CollectManagedTcpReflectorIds(
-		const QVector<MTPPhoneConnection> &list) {
-	auto result = base::flat_set<int64>();
-	result.reserve(list.size());
-	for (const auto &connection : list) {
-		connection.match([&](const MTPDphoneConnection &data) {
-			if (IsManagedTcpReflector(data)) {
-				result.emplace(int64(data.vid().v));
-			}
-		}, [](const MTPDphoneConnectionWebrtc &) {
-		});
-	}
-	return result;
+[[nodiscard]] bool IsManagedTurnCredential(const QString &value) {
+	const auto bytes = value.toUtf8();
+	return !bytes.isEmpty()
+		&& bytes.size() <= kMaxSocksCredentialSize
+		&& !bytes.contains('\0');
 }
 
-void AppendManagedTcpReflector(
+[[nodiscard]] bool IsManagedUdpTurn(
+		const MTPDphoneConnectionWebrtc &data) {
+	const auto port = data.vport().v;
+	const auto username = qs(data.vusername());
+	const auto password = qs(data.vpassword());
+	return data.is_turn()
+		&& username != u"reflector"_q
+		&& IsManagedTurnCredential(username)
+		&& IsManagedTurnCredential(password)
+		&& port > 0
+		&& port <= std::numeric_limits<uint16>::max()
+		&& (IsSafeReflectorAddress(
+			qs(data.vip()),
+			QAbstractSocket::IPv4Protocol)
+			|| IsSafeReflectorAddress(
+				qs(data.vipv6()),
+				QAbstractSocket::IPv6Protocol));
+}
+
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+void LogManagedRelaySelection(
+		const QVector<MTPPhoneConnection> &connections,
+		const std::vector<tgcalls::RtcServer> &servers) {
+	if (!Logs::DebugEnabled()) {
+		return;
+	}
+	auto legacy = 0;
+	auto webRtcTurn = 0;
+	auto selectedTcp = 0;
+	auto selectedUdp = 0;
+	for (const auto &connection : connections) {
+		connection.match([&](const MTPDphoneConnection &) {
+			++legacy;
+		}, [&](const MTPDphoneConnectionWebrtc &data) {
+			if (data.is_turn()) {
+				++webRtcTurn;
+			}
+		});
+	}
+	for (const auto &server : servers) {
+		if (server.isTcp) {
+			++selectedTcp;
+		} else {
+			++selectedUdp;
+		}
+	}
+	DEBUG_LOG((
+		"Call VLESS Debug: relay selection received %1 legacy and "
+		"%2 WebRTC TURN entries; accepted %3 TCP and %4 UDP addresses."
+	).arg(legacy
+	).arg(webRtcTurn
+	).arg(selectedTcp
+	).arg(selectedUdp));
+}
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
+
+void AppendManagedRelay(
 		std::vector<tgcalls::RtcServer> &list,
 		const MTPPhoneConnection &connection,
 		const base::flat_set<int64> &ids) {
 	connection.match([&](const MTPDphoneConnection &data) {
-		if (!IsManagedTcpReflector(data)) {
+		if (!IsManagedReflector(data)) {
 			return;
 		}
 		const auto i = ids.find(int64(data.vid().v));
@@ -278,25 +326,45 @@ void AppendManagedTcpReflector(
 			}
 			return result;
 		};
-		const auto append = [&](const QString &host) {
-			const auto address = QHostAddress(host);
-			const auto protocol = address.protocol();
+		const auto append = [&, id = uint8((i - begin(ids)) + 1)](
+				const QString &host,
+				QAbstractSocket::NetworkLayerProtocol protocol) {
 			if (!IsSafeReflectorAddress(host, protocol)) {
 				return;
 			}
 			list.push_back(tgcalls::RtcServer{
-				.id = uint8((i - begin(ids)) + 1),
+				.id = id,
 				.host = host.toStdString(),
 				.port = uint16(data.vport().v),
 				.login = "reflector",
 				.password = hex(tag),
 				.isTurn = true,
-				.isTcp = true,
+				.isTcp = data.is_tcp(),
 			});
 		};
-		append(data.vip().v);
-		append(data.vipv6().v);
-	}, [](const MTPDphoneConnectionWebrtc &) {
+		append(data.vip().v, QAbstractSocket::IPv4Protocol);
+		append(data.vipv6().v, QAbstractSocket::IPv6Protocol);
+	}, [&](const MTPDphoneConnectionWebrtc &data) {
+		if (!IsManagedUdpTurn(data)) {
+			return;
+		}
+		const auto append = [&data, &list](
+				const QString &host,
+				QAbstractSocket::NetworkLayerProtocol protocol) {
+			if (!IsSafeReflectorAddress(host, protocol)) {
+				return;
+			}
+			list.push_back(tgcalls::RtcServer{
+				.host = host.toStdString(),
+				.port = uint16(data.vport().v),
+				.login = qs(data.vusername()).toUtf8().toStdString(),
+				.password = qs(data.vpassword()).toUtf8().toStdString(),
+				.isTurn = true,
+				.isTcp = false,
+			});
+		};
+		append(qs(data.vip()), QAbstractSocket::IPv4Protocol);
+		append(qs(data.vipv6()), QAbstractSocket::IPv6Protocol);
 	});
 }
 
@@ -1353,15 +1421,20 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 	}
 
 	if (_managedVlessIntent) {
-		const auto ids = CollectManagedTcpReflectorIds(call.vconnections().v);
+		const auto ids = CollectEndpointIds(call.vconnections().v);
 		for (const auto &connection : call.vconnections().v) {
-			AppendManagedTcpReflector(
+			AppendManagedRelay(
 				descriptor.rtcServers,
 				connection,
 				ids);
 		}
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+		LogManagedRelaySelection(
+			call.vconnections().v,
+			descriptor.rtcServers);
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
 		if (descriptor.rtcServers.empty()) {
-			LOG(("Call Error: No managed VLESS TCP reflectors."));
+			LOG(("Call Error: No managed VLESS relay endpoints."));
 			finish(FinishType::Failed);
 			return;
 		}
@@ -1383,6 +1456,7 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 			descriptor.proxy->login = _managedVlessProxy.user.toStdString();
 			descriptor.proxy->password
 				= _managedVlessProxy.password.toStdString();
+			descriptor.proxy->managed = true;
 		} else {
 			const auto &settingsProxy = Core::App().settings().proxy();
 			using ProxyData = MTP::ProxyData;
@@ -1401,6 +1475,14 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 			}
 		}
 	}
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+	if (_managedVlessIntent) {
+		DEBUG_LOG((
+			"Call VLESS Debug: starting relay-only media with %1 "
+			"proxied relay addresses and P2P disabled."
+		).arg(int(descriptor.rtcServers.size())));
+	}
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
 	_instance = tgcalls::Meta::Create(versionString, std::move(descriptor));
 	if (!_instance) {
 		LOG(("Call Error: Wrong library version: %1."
@@ -1446,6 +1528,12 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 
 void Call::handleControllerStateChange(tgcalls::State state) {
 	Expects(!conferenceInvite());
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+	if (_managedVlessIntent) {
+		DEBUG_LOG(("Call VLESS Debug: media engine state %1."
+			).arg(int(state)));
+	}
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
 
 	switch (state) {
 	case tgcalls::State::WaitInit: {
@@ -1740,6 +1828,12 @@ void Call::setupManagedVless() {
 			&& IsManagedVlessProxy(selected)) {
 			_managedVlessProxy = selected;
 		}
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+		DEBUG_LOG((
+			"Call VLESS Debug: call created with managed route intent; "
+			"sidecar readiness is %1."
+		).arg(Logs::b(IsManagedVlessProxy(_managedVlessProxy))));
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
 	}
 	Core::App().proxyChanges(
 	) | rpl::on_next([=](const Core::Application::ProxyChange &) {

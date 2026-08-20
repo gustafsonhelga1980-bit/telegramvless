@@ -5,6 +5,7 @@
 # https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 option(TDESKTOP_API_TEST "Use test API credentials." OFF)
+option(DESKTOP_APP_VLESS_DEBUG_LOGS "Enable detailed VLESS routing diagnostics." OFF)
 set(TDESKTOP_API_ID "0" CACHE STRING "Provide 'api_id' for the Telegram API access.")
 set(TDESKTOP_API_HASH "" CACHE STRING "Provide 'api_hash' for the Telegram API access.")
 
@@ -42,6 +43,10 @@ endif()
 
 if (DESKTOP_APP_DISABLE_CRASH_REPORTS)
     target_compile_definitions(Telegram PRIVATE TDESKTOP_DISABLE_CRASH_REPORTS)
+endif()
+
+if (DESKTOP_APP_VLESS_DEBUG_LOGS)
+    target_compile_definitions(Telegram PRIVATE TDESKTOP_VLESS_DEBUG_LOGS)
 endif()
 
 if (DESKTOP_APP_USE_PACKAGED)

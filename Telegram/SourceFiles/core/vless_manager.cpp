@@ -220,6 +220,7 @@ struct VlessManager::Private final
 	enum class ProbeStage {
 		Greeting,
 		Authentication,
+		UdpAssociation,
 	};
 
 	~Private();
@@ -324,6 +325,9 @@ void VlessManager::Private::prepared(uint64 id, PreparedStart result) {
 	sidecar = std::move(result.sidecar);
 	config = std::move(result.config);
 	candidateProxy = std::move(result.proxy);
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+	DEBUG_LOG(("VLESS Debug: sidecar configuration prepared."));
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
 	startConfigurationTest(id);
 }
 
@@ -388,6 +392,9 @@ void VlessManager::Private::configurationTestFinished(
 		failAttempt(VlessError::ConfigurationFailed);
 		return;
 	}
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+	DEBUG_LOG(("VLESS Debug: sidecar configuration test passed."));
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
 	startCandidate(id);
 }
 
@@ -450,6 +457,9 @@ void VlessManager::Private::candidateStarted(
 	}
 	process->closeWriteChannel();
 	phase = Phase::Probing;
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+	DEBUG_LOG(("VLESS Debug: sidecar started; probing authenticated UDP."));
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
 	QTimer::singleShot(kReadinessTimeout, this, [=] {
 		if (generation == id
 			&& phase != Phase::Idle
@@ -521,11 +531,57 @@ void VlessManager::Private::readProbe(uint64 id, uint64 probeId) {
 		return;
 	}
 	probeReply += probeSocket->readAll();
+	if (probeStage == ProbeStage::UdpAssociation) {
+		if (probeReply.size() < 4) {
+			return;
+		}
+		if (probeReply[0] != char(5)
+			|| probeReply[1] != char(0)
+			|| probeReply[2] != char(0)
+			|| probeReply[3] != char(1)) {
+			probeFailed(id, probeId);
+			return;
+		}
+		constexpr auto expected = 10;
+		if (probeReply.size() < expected) {
+			return;
+		} else if (probeReply.size() != expected) {
+			probeFailed(id, probeId);
+			return;
+		}
+		const auto proxyAddress = QHostAddress(candidateProxy.host);
+		const auto relayAddress = (uint32(uchar(probeReply[4])) << 24)
+			| (uint32(uchar(probeReply[5])) << 16)
+			| (uint32(uchar(probeReply[6])) << 8)
+			| uint32(uchar(probeReply[7]));
+		if (proxyAddress.protocol() != QAbstractSocket::IPv4Protocol
+			|| !proxyAddress.isLoopback()
+			|| (relayAddress != 0 && (relayAddress >> 24) != 127)) {
+			probeFailed(id, probeId);
+			return;
+		}
+		const auto port = (uint16(uchar(probeReply[expected - 2])) << 8)
+			| uint16(uchar(probeReply[expected - 1]));
+		if (!port) {
+			probeFailed(id, probeId);
+			return;
+		}
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+		DEBUG_LOG((
+			"VLESS Debug: authenticated SOCKS5 UDP association succeeded."));
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
+		probeSucceeded(id, probeId);
+		return;
+	}
 	if (probeReply.size() < 2) {
 		return;
 	}
 	const auto response = probeReply.left(2);
 	probeReply.remove(0, 2);
+	if (!probeReply.isEmpty()) {
+		probeFailed(id, probeId);
+		return;
+	}
 	if (probeStage == ProbeStage::Greeting) {
 		if (response != QByteArray::fromHex("0502")) {
 			probeFailed(id, probeId);
@@ -550,7 +606,11 @@ void VlessManager::Private::readProbe(uint64 id, uint64 probeId) {
 			probeFailed(id, probeId);
 		}
 	} else if (response[0] == char(1) && response[1] == char(0)) {
-		probeSucceeded(id, probeId);
+		const auto request = QByteArray::fromHex("05030001000000000000");
+		probeStage = ProbeStage::UdpAssociation;
+		if (probeSocket->write(request) != request.size()) {
+			probeFailed(id, probeId);
+		}
 	} else {
 		probeFailed(id, probeId);
 	}
@@ -604,6 +664,10 @@ void VlessManager::Private::candidateReady(uint64 id) {
 	}
 	phase = Phase::Ready;
 	confirmationProbe = false;
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+	DEBUG_LOG((
+		"VLESS Debug: authenticated UDP readiness remained stable."));
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
 	const auto done = std::move(callback);
 	if (done) {
 		done({ .proxy = candidateProxy });
@@ -663,6 +727,14 @@ void VlessManager::Private::failAttempt(VlessError error) {
 	if (phase == Phase::Idle) {
 		return;
 	}
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+	DEBUG_LOG((
+		"VLESS Debug: startup failed with error %1 in phase %2, "
+		"probe stage %3."
+	).arg(int(error)
+	).arg(int(phase)
+	).arg(int(probeStage)));
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
 	++generation;
 	const auto done = std::move(callback);
 	clearAttempt();
@@ -703,6 +775,9 @@ void VlessManager::Private::activeStopped(
 	QObject::disconnect(process, nullptr, this, nullptr);
 	process->deleteLater();
 	Wipe(activeProxy);
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+	DEBUG_LOG(("VLESS Debug: active sidecar stopped."));
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
 	failures.fire(VlessError::ProcessExited);
 }
 

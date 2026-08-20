@@ -173,7 +173,7 @@ void CheckCommonConfig(const QJsonObject &root) {
 	Check(inbound.value(u"protocol"_q) == u"socks"_q, "used SOCKS inbound");
 	const auto settings = ObjectAt(inbound, u"settings"_q);
 	Check(settings.value(u"auth"_q) == u"password"_q, "required SOCKS auth");
-	Check(settings.value(u"udp"_q) == false, "disabled SOCKS UDP");
+	Check(settings.value(u"udp"_q) == true, "enabled SOCKS UDP");
 	const auto accounts = settings.value(u"accounts"_q).toArray();
 	Check(accounts.size() == 1, "generated one SOCKS account");
 	if (accounts.size() == 1) {

@@ -7,6 +7,10 @@
 add_library(lib_tgcalls STATIC)
 init_target(lib_tgcalls) # Can't use std::optional::value on macOS.
 
+if (DESKTOP_APP_VLESS_DEBUG_LOGS)
+    target_compile_definitions(lib_tgcalls PRIVATE TDESKTOP_VLESS_DEBUG_LOGS)
+endif()
+
 add_library(tdesktop::lib_tgcalls ALIAS lib_tgcalls)
 
 set(tgcalls_dir ${third_party_loc}/tgcalls)
@@ -88,6 +92,8 @@ PRIVATE
     v2/ReflectorRelayPortFactory.h
     v2/Socks5ProxySocket.cpp
     v2/Socks5ProxySocket.h
+    v2/Socks5UdpSocketFactory.cpp
+    v2/Socks5UdpSocketFactory.h
     v2/Signaling.cpp
     v2/Signaling.h
     v2/SignalingConnection.cpp

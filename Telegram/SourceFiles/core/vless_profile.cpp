@@ -1796,7 +1796,7 @@ QByteArray VlessProfile::xrayConfig(
 									}
 								}
 							},
-							{ u"udp"_q, false },
+							{ u"udp"_q, true },
 						}
 					},
 				}
