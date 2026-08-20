@@ -11,9 +11,24 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/serialize_common.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace Core {
 namespace {
+
+constexpr auto kMaxSocksCredentialSize = 255;
+
+[[nodiscard]] bool IsManagedVlessCredential(const QString &value) {
+	if (value.isEmpty() || value.size() > kMaxSocksCredentialSize) {
+		return false;
+	}
+	for (const auto character : value) {
+		if (character.unicode() == 0 || character.unicode() >= 128) {
+			return false;
+		}
+	}
+	return true;
+}
 
 [[nodiscard]] qint32 ProxySettingsToInt(MTP::ProxyData::Settings settings) {
 	switch(settings) {
@@ -114,6 +129,16 @@ MTP::ProxyData VlessProxySink() {
 		.host = u"127.0.0.1"_q,
 		.port = 9,
 	};
+}
+
+bool IsManagedVlessProxy(const MTP::ProxyData &proxy) {
+	using Type = MTP::ProxyData::Type;
+	return proxy.type == Type::Socks5
+		&& proxy.host == u"127.0.0.1"_q
+		&& proxy.port > 0
+		&& proxy.port <= std::numeric_limits<uint16>::max()
+		&& IsManagedVlessCredential(proxy.user)
+		&& IsManagedVlessCredential(proxy.password);
 }
 
 SettingsProxy::SettingsProxy()

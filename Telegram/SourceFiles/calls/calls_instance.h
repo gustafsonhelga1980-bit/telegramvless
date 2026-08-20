@@ -181,7 +181,6 @@ private:
 		Group::JoinInfo info,
 		const MTPInputGroupCall &inputCall);
 	void destroyGroupCall(not_null<GroupCall*> call);
-	void stopGroupCallsForVless();
 	void confirmLeaveCurrent(
 		std::shared_ptr<Ui::Show> show,
 		not_null<PeerData*> peer,

@@ -239,13 +239,6 @@ VideoStream::VideoStream(
 		_call->canManageValue(),
 		_commentsShown.value())) {
 	Core::App().calls().registerVideoStream(_call.get());
-	Core::App().proxyChanges(
-	) | rpl::filter([=](const Core::Application::ProxyChange &) {
-		return Core::App().settings().proxy().vlessEnabled();
-	}) | rpl::on_next([=] {
-		_call->stopMediaAndHangup();
-		_closeRequests.fire({});
-	}, _lifetime);
 	setupMembers();
 	setupVideo();
 	setupMessages();

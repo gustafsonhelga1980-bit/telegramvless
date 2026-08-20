@@ -1285,7 +1285,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "lng_proxy_vless_start_failed" = "The VLESS proxy could not be started. Your connection was kept fail-closed.";
 "lng_proxy_vless_remove_failed" = "The VLESS proxy could not be removed. Your current connection was kept unchanged.";
 "lng_proxy_vless_calls_active" = "End the current call or live stream before changing the VLESS proxy.";
-"lng_proxy_vless_group_calls_unavailable" = "Group and conference calls are unavailable while VLESS proxy is enabled.";
+"lng_proxy_vless_group_calls_unavailable" = "The VLESS proxy is unavailable, so this group or conference call cannot start.";
 "lng_proxy_share" = "Share";
 "lng_proxy_online" = "online";
 "lng_proxy_checking" = "checking…";

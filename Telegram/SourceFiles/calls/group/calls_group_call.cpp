@@ -61,6 +61,19 @@ constexpr auto kFullAsMediumsCount = 4; // 1 Full is like 4 Mediums.
 constexpr auto kMaxMediumQualities = 16; // 4 Fulls or 16 Mediums.
 constexpr auto kShortPollChainBlocksPerRequest = 50;
 
+[[nodiscard]] std::unique_ptr<tgcalls::Proxy> MakeManagedVlessProxy(
+		const MTP::ProxyData &proxy) {
+	Expects(Core::IsManagedVlessProxy(proxy));
+
+	auto result = std::make_unique<tgcalls::Proxy>();
+	result->host = proxy.host.toStdString();
+	result->port = uint16(proxy.port);
+	result->managed = true;
+	result->login = proxy.user.toStdString();
+	result->password = proxy.password.toStdString();
+	return result;
+}
+
 [[nodiscard]] const Data::GroupCallParticipant *LookupParticipant(
 		not_null<GroupCall*> call,
 		not_null<PeerData*> participantPeer) {
@@ -632,6 +645,10 @@ GroupCall::GroupCall(
 , _rtmp(join.rtmp)
 , _singleSourceVolume(Group::kDefaultVolume) {
 	applyInputCall(inputCall);
+	setupManagedVless();
+	if (!ensureManagedVlessRoute()) {
+		return;
+	}
 
 	_muted.value(
 	) | rpl::combine_previous(
@@ -751,6 +768,79 @@ GroupCall::~GroupCall() {
 		Core::App().mediaDevices().setCaptureMuteTracker(this, false);
 	}
 	_messages->undoScheduledPaidOnDestroy();
+}
+
+void GroupCall::setupManagedVless() {
+	const auto &settings = Core::App().settings().proxy();
+	_managedVlessIntent = settings.vlessEnabled();
+	if (_managedVlessIntent) {
+		const auto selected = settings.selected();
+		if (settings.isEnabled()
+			&& Core::App().vlessProxyRunning()
+			&& Core::IsManagedVlessProxy(selected)) {
+			_managedVlessProxy = selected;
+		}
+	}
+	Core::App().proxyChanges(
+	) | rpl::on_next([=](const Core::Application::ProxyChange &) {
+		const auto vlessEnabled
+			= Core::App().settings().proxy().vlessEnabled();
+		if ((_managedVlessIntent && !managedVlessRouteAvailable())
+			|| (!_managedVlessIntent && vlessEnabled)) {
+			failManagedVlessRoute();
+		}
+	}, _lifetime);
+}
+
+bool GroupCall::managedVlessRouteAvailable() const {
+	if (!_managedVlessIntent
+		|| !Core::IsManagedVlessProxy(_managedVlessProxy)) {
+		return false;
+	}
+	const auto &settings = Core::App().settings().proxy();
+	return settings.vlessEnabled()
+		&& settings.isEnabled()
+		&& Core::App().vlessProxyRunning()
+		&& settings.selected() == _managedVlessProxy;
+}
+
+bool GroupCall::ensureManagedVlessRoute() {
+	if (_managedVlessRouteFailed) {
+		return false;
+	} else if (_managedVlessIntent && managedVlessRouteAvailable()) {
+		return true;
+	} else if (!_managedVlessIntent
+		&& !Core::App().settings().proxy().vlessEnabled()) {
+		return true;
+	}
+	failManagedVlessRoute();
+	return false;
+}
+
+void GroupCall::failManagedVlessRoute() {
+	if (_managedVlessRouteFailed) {
+		return;
+	}
+	_managedVlessRouteFailed = true;
+	destroyScreencast();
+	destroyController();
+	const auto joining = (_joinState.action == JoinAction::Joining);
+	const auto leaveSsrc = joining
+		? ((_joinRequestSent && _id)
+			? _joinState.payload.ssrc
+			: _lastJoinedSsrc)
+		: _joinState.ssrc;
+	_api.request(base::take(_joinRequestId)).cancel();
+	_api.request(base::take(_screenJoinRequestId)).cancel();
+	_api.request(base::take(_createRequestId)).cancel();
+	_joinRequestSent = false;
+	_screenJoinState.finish();
+	if (joining) {
+		_joinState.finish(leaveSsrc);
+	}
+	_managedVlessProxy = MTP::ProxyData();
+	LOG(("Call Error: Managed VLESS group route unavailable or changed."));
+	finish(FinishType::Failed);
 }
 
 void GroupCall::initConferenceE2E() {
@@ -1605,10 +1695,14 @@ void GroupCall::rejoin(not_null<PeerData*> as) {
 
 	_joinState.action = JoinAction::Joining;
 	_joinState.ssrc = 0;
+	_joinRequestSent = false;
 	_initialMuteStateSent = false;
 	_systemMuteReconciled = false;
 	setState(State::Joining);
 	if (!tryCreateController()) {
+		if (!_instance) {
+			return;
+		}
 		setInstanceMode(InstanceMode::None);
 	}
 	applyMeInCallLocally();
@@ -1662,7 +1756,8 @@ void GroupCall::sendJoinRequest() {
 		| (_joinHash.isEmpty() ? Flag(0) : Flag::f_invite_hash)
 		| (wasVideoStopped ? Flag::f_video_stopped : Flag(0))
 		| (_e2e ? (Flag::f_public_key | Flag::f_block) : Flag());
-	_api.request(MTPphone_JoinGroupCall(
+	_joinRequestSent = true;
+	_joinRequestId = _api.request(MTPphone_JoinGroupCall(
 		MTP_flags(flags),
 		inputCallSafe(),
 		joinAs()->input(),
@@ -1673,12 +1768,16 @@ void GroupCall::sendJoinRequest() {
 	)).done([=](
 			const MTPUpdates &result,
 			const MTP::Response &response) {
+		_joinRequestId = 0;
+		_joinRequestSent = false;
 		joinDone(
 			TimestampInMsFromMsgId(response.outerMsgId),
 			result,
 			wasMuteState,
 			wasVideoStopped);
 	}).fail([=](const MTP::Error &error) {
+		_joinRequestId = 0;
+		_joinRequestSent = false;
 		joinFail(error.type());
 	}).send();
 }
@@ -1691,12 +1790,14 @@ void GroupCall::refreshLastBlockAndJoin() {
 		checkNextJoinAction();
 		return;
 	}
-	_api.request(MTPphone_GetGroupCallChainBlocks(
+	_joinRequestSent = false;
+	_joinRequestId = _api.request(MTPphone_GetGroupCallChainBlocks(
 		inputCallSafe(),
 		MTP_int(0),
 		MTP_int(-1),
 		MTP_int(1)
 	)).done([=](const MTPUpdates &result) {
+		_joinRequestId = 0;
 		if (result.type() != mtpc_updates) {
 			_joinState.finish();
 			LOG(("Call Error: Bad result in GroupCallChainBlocks."));
@@ -1719,6 +1820,7 @@ void GroupCall::refreshLastBlockAndJoin() {
 		}
 		sendJoinRequest();
 	}).fail([=](const MTP::Error &error) {
+		_joinRequestId = 0;
 		_joinState.finish();
 		const auto &type = error.type();
 		LOG(("Call Error: Could not get last block, error: %1").arg(type));
@@ -1787,6 +1889,7 @@ void GroupCall::joinDone(
 	_serverTimeMsGotAt = crl::now();
 
 	_joinState.finish(_joinState.payload.ssrc);
+	_lastJoinedSsrc = _joinState.ssrc;
 	_mySsrcs.emplace(_joinState.ssrc);
 
 	setState((_instanceState.current()
@@ -1981,6 +2084,9 @@ void GroupCall::rejoinPresentation() {
 	_screenJoinState.action = JoinAction::Joining;
 	_screenJoinState.ssrc = 0;
 	if (!tryCreateScreencast()) {
+		if (!_screenInstance) {
+			return;
+		}
 		setScreenInstanceMode(InstanceMode::None);
 	}
 	LOG(("Call Info: Requesting join screen payload."));
@@ -1999,11 +2105,15 @@ void GroupCall::rejoinPresentation() {
 				).arg(ssrc));
 
 			const auto json = QByteArray::fromStdString(payload.json);
-			_api.request(
+			_screenJoinRequestId = _api.request(
 				MTPphone_JoinGroupCallPresentation(
 					inputCall(),
 					MTP_dataJSON(MTP_bytes(json)))
 			).done([=](const MTPUpdates &updates) {
+				_screenJoinRequestId = 0;
+				if (_managedVlessRouteFailed) {
+					return;
+				}
 				_screenJoinState.finish(ssrc);
 				_mySsrcs.emplace(ssrc);
 
@@ -2014,6 +2124,10 @@ void GroupCall::rejoinPresentation() {
 				}
 				sendPendingSelfUpdates();
 			}).fail([=](const MTP::Error &error) {
+				_screenJoinRequestId = 0;
+				if (_managedVlessRouteFailed) {
+					return;
+				}
 				_screenJoinState.finish();
 
 				const auto type = error.type();
@@ -2252,9 +2366,11 @@ void GroupCall::leave() {
 	// the call is already destroyed.
 	const auto session = &_peer->session();
 	const auto weak = base::make_weak(this);
+	const auto ssrc = base::take(_joinState.ssrc);
+	_lastJoinedSsrc = 0;
 	session->api().request(MTPphone_LeaveGroupCall(
 		inputCall(),
-		MTP_int(base::take(_joinState.ssrc))
+		MTP_int(ssrc)
 	)).done([=](const MTPUpdates &result) {
 		// Here 'this' could be destroyed by updates, so we set Ended after
 		// updates being handled, but in a guarded way.
@@ -3013,6 +3129,8 @@ auto GroupCall::lookupVideoCodecPreferences() const
 bool GroupCall::tryCreateController() {
 	if (_instance) {
 		return false;
+	} else if (!ensureManagedVlessRoute()) {
+		return false;
 	}
 	const auto &settings = Core::App().settings();
 
@@ -3131,6 +3249,9 @@ bool GroupCall::tryCreateController() {
 			return result;
 		},
 		.e2eEncryptDecrypt = e2eEncryptDecrypt(),
+		.proxy = _managedVlessIntent
+			? MakeManagedVlessProxy(_managedVlessProxy)
+			: nullptr,
 	};
 	if (Logs::DebugEnabled()) {
 		auto callLogFolder = cWorkingDir() + u"DebugLogs"_q;
@@ -3166,6 +3287,8 @@ bool GroupCall::tryCreateController() {
 bool GroupCall::tryCreateScreencast() {
 	if (_screenInstance) {
 		return false;
+	} else if (!ensureManagedVlessRoute()) {
+		return false;
 	}
 
 	const auto weak = base::make_weak(&_screenInstanceGuard);
@@ -3184,6 +3307,9 @@ bool GroupCall::tryCreateScreencast() {
 		.videoContentType = tgcalls::VideoContentType::Screencast,
 		.videoCodecPreferences = lookupVideoCodecPreferences(),
 		.e2eEncryptDecrypt = e2eEncryptDecrypt(),
+		.proxy = _managedVlessIntent
+			? MakeManagedVlessProxy(_managedVlessProxy)
+			: nullptr,
 	};
 
 	LOG(("Call Info: Creating group screen instance"));
@@ -3790,6 +3916,10 @@ void GroupCall::checkJoined() {
 
 void GroupCall::setInstanceConnected(
 		tgcalls::GroupNetworkState networkState) {
+	if (_managedVlessIntent && networkState.isFailed) {
+		failManagedVlessRoute();
+		return;
+	}
 	const auto inTransit = networkState.isTransitioningFromBroadcastToRtc;
 	const auto instanceState = !networkState.isConnected
 		? InstanceState::Disconnected
@@ -3822,6 +3952,10 @@ void GroupCall::setInstanceConnected(
 
 void GroupCall::setScreenInstanceConnected(
 		tgcalls::GroupNetworkState networkState) {
+	if (_managedVlessIntent && networkState.isFailed) {
+		failManagedVlessRoute();
+		return;
+	}
 	const auto inTransit = networkState.isTransitioningFromBroadcastToRtc;
 	const auto screenInstanceState = !networkState.isConnected
 		? InstanceState::Disconnected

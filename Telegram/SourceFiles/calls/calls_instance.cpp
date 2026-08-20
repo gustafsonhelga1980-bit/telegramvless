@@ -57,6 +57,14 @@ std::atomic<int> PendingMediaTeardowns = 0;
 using CallSound = Call::Delegate::CallSound;
 using GroupCallSound = GroupCall::Delegate::GroupCallSound;
 
+[[nodiscard]] bool ManagedVlessRouteAvailable() {
+	const auto &settings = Core::App().settings().proxy();
+	return settings.vlessEnabled()
+		&& settings.isEnabled()
+		&& Core::App().vlessProxyRunning()
+		&& Core::IsManagedVlessProxy(settings.selected());
+}
+
 } // namespace
 
 FnMut<void()> AddMediaTeardownWaiter() {
@@ -203,12 +211,6 @@ Instance::Instance()
 , _cachedDhConfig(std::make_unique<DhConfig>())
 , _chooseJoinAs(std::make_unique<Group::ChooseJoinAsProcess>())
 , _startWithRtmp(std::make_unique<Group::StartRtmpProcess>()) {
-	Core::App().proxyChanges(
-	) | rpl::filter([=](const Core::Application::ProxyChange &) {
-		return Core::App().settings().proxy().vlessEnabled();
-	}) | rpl::on_next([=] {
-		stopGroupCallsForVless();
-	}, _lifetime);
 }
 
 Instance::~Instance() {
@@ -316,7 +318,8 @@ void Instance::startOrJoinConferenceCall(StartConferenceInfo args) {
 bool Instance::startedConferenceReady(
 		not_null<GroupCall*> call,
 		StartConferenceInfo args) {
-	if (Core::App().settings().proxy().vlessEnabled()) {
+	if (Core::App().settings().proxy().vlessEnabled()
+		&& !ManagedVlessRouteAvailable()) {
 		call->stopMediaAndHangup();
 		crl::on_main(this, [=] {
 			if (_startingGroupCall.get() == call) {
@@ -524,7 +527,8 @@ void Instance::destroyGroupCall(not_null<GroupCall*> call) {
 void Instance::createGroupCall(
 		Group::JoinInfo info,
 		const MTPInputGroupCall &inputCall) {
-	if (Core::App().settings().proxy().vlessEnabled()) {
+	if (Core::App().settings().proxy().vlessEnabled()
+		&& !ManagedVlessRouteAvailable()) {
 		return;
 	}
 	destroyCurrentCall();
@@ -547,7 +551,8 @@ void Instance::createGroupCall(
 
 bool Instance::preventGroupCallForVless(
 		std::shared_ptr<Ui::Show> show) const {
-	if (!Core::App().settings().proxy().vlessEnabled()) {
+	if (!Core::App().settings().proxy().vlessEnabled()
+		|| ManagedVlessRouteAvailable()) {
 		return false;
 	}
 	auto box = Ui::MakeInformBox(
@@ -558,33 +563,6 @@ bool Instance::preventGroupCallForVless(
 		Ui::show(std::move(box));
 	}
 	return true;
-}
-
-void Instance::stopGroupCallsForVless() {
-	if (const auto call = _currentGroupCall.get()) {
-		call->stopMediaAndHangup();
-		if (_currentGroupCall.get() == call) {
-			destroyGroupCall(call);
-		}
-	}
-	if (const auto call = _startingGroupCall.get()) {
-		call->stopMediaAndHangup();
-		if (_startingGroupCall.get() == call) {
-			destroyGroupCall(call);
-		}
-	}
-	auto streams = std::vector<base::weak_ptr<GroupCall>>();
-	for (const auto &entry : _streams) {
-		streams.insert(
-			end(streams),
-			begin(entry.second),
-			end(entry.second));
-	}
-	for (const auto &weak : streams) {
-		if (const auto call = weak.get()) {
-			call->stopMediaAndHangup();
-		}
-	}
 }
 
 void Instance::refreshDhConfig() {
@@ -1257,7 +1235,8 @@ void Instance::showConferenceInvite(
 		|| user->isSelf()
 		|| user->session().appConfig().callsDisabledForSession()) {
 		return;
-	} else if (Core::App().settings().proxy().vlessEnabled()) {
+	} else if (Core::App().settings().proxy().vlessEnabled()
+		&& !ManagedVlessRouteAvailable()) {
 		declineIncomingConferenceInvites(conferenceId);
 		return;
 	} else if (_currentCall

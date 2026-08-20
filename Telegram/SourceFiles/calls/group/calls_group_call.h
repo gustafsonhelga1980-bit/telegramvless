@@ -7,11 +7,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "base/weak_ptr.h"
-#include "base/timer.h"
 #include "base/bytes.h"
-#include "mtproto/sender.h"
+#include "base/timer.h"
+#include "base/weak_ptr.h"
 #include "mtproto/mtproto_auth_key.h"
+#include "mtproto/mtproto_proxy_data.h"
+#include "mtproto/sender.h"
 #include "webrtc/webrtc_device_common.h"
 #include "webrtc/webrtc_device_resolver.h"
 
@@ -652,6 +653,10 @@ private:
 
 	void setupMediaDevices();
 	void setupOutgoingVideo();
+	void setupManagedVless();
+	[[nodiscard]] bool managedVlessRouteAvailable() const;
+	[[nodiscard]] bool ensureManagedVlessRoute();
+	void failManagedVlessRoute();
 	void initConferenceE2E();
 	void setupConferenceCall();
 	void trackParticipantsWithAccess();
@@ -690,6 +695,7 @@ private:
 	rpl::event_stream<PeerData*> _peerStream;
 	not_null<History*> _history; // Can change in legacy group migration.
 	MTP::Sender _api;
+	MTP::ProxyData _managedVlessProxy;
 	rpl::event_stream<not_null<Data::GroupCall*>> _realChanges;
 	rpl::variable<State> _state = State::Creating;
 	base::flat_set<uint32> _unresolvedSsrcs;
@@ -698,6 +704,8 @@ private:
 	const std::unique_ptr<Group::Messages> _messages;
 	bool _recordingStoppedByMe = false;
 	bool _requestedVideoChannelsUpdateScheduled = false;
+	bool _managedVlessIntent = false;
+	bool _managedVlessRouteFailed = false;
 
 	MTP::DcId _broadcastDcId = 0;
 	base::flat_map<not_null<LoadPartTask*>, LoadingPart> _broadcastParts;
@@ -738,12 +746,16 @@ private:
 	CallId _accessHash = 0;
 	JoinState _joinState;
 	JoinState _screenJoinState;
+	uint32 _lastJoinedSsrc = 0;
 	std::string _cameraEndpoint;
 	std::string _screenEndpoint;
 	TimeId _scheduleDate = 0;
 	base::flat_set<uint32> _mySsrcs;
 	mtpRequestId _createRequestId = 0;
+	mtpRequestId _joinRequestId = 0;
+	mtpRequestId _screenJoinRequestId = 0;
 	mtpRequestId _selfUpdateRequestId = 0;
+	bool _joinRequestSent = false;
 
 	rpl::variable<InstanceState> _instanceState
 		= InstanceState::Disconnected;

@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Core {
 
 [[nodiscard]] MTP::ProxyData VlessProxySink();
+[[nodiscard]] bool IsManagedVlessProxy(const MTP::ProxyData &proxy);
 
 class SettingsProxy final {
 public:

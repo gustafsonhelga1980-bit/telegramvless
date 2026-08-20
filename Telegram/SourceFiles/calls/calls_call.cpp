@@ -173,28 +173,6 @@ void AppendServer(
 	});
 }
 
-[[nodiscard]] bool IsManagedVlessCredential(const QString &value) {
-	if (value.isEmpty() || value.size() > kMaxSocksCredentialSize) {
-		return false;
-	}
-	for (const auto character : value) {
-		if (character.unicode() == 0 || character.unicode() >= 128) {
-			return false;
-		}
-	}
-	return true;
-}
-
-[[nodiscard]] bool IsManagedVlessProxy(const MTP::ProxyData &proxy) {
-	using Type = MTP::ProxyData::Type;
-	return proxy.type == Type::Socks5
-		&& proxy.host == u"127.0.0.1"_q
-		&& proxy.port > 0
-		&& proxy.port <= std::numeric_limits<uint16>::max()
-		&& IsManagedVlessCredential(proxy.user)
-		&& IsManagedVlessCredential(proxy.password);
-}
-
 [[nodiscard]] bool IsPrivateOrLinkLocal(const QHostAddress &address) {
 	if (address.protocol() == QAbstractSocket::IPv4Protocol) {
 		const auto ip = address.toIPv4Address();
@@ -645,9 +623,6 @@ void Call::applyUserConfirmation() {
 void Call::answer() {
 	if (!ensureManagedVlessRoute()) {
 		return;
-	} else if (conferenceInvite() && _managedVlessIntent) {
-		failManagedVlessRoute();
-		return;
 	}
 	const auto video = isSharingVideo();
 	_delegate->callRequestPermissionsOrFail(crl::guard(this, [=] {
@@ -665,10 +640,7 @@ StartConferenceInfo Call::migrateConferenceInfo(StartConferenceInfo extend) {
 
 void Call::acceptConferenceInvite() {
 	Expects(conferenceInvite());
-	if (_managedVlessIntent
-		|| _managedVlessRouteFailed
-		|| Core::App().settings().proxy().vlessEnabled()) {
-		failManagedVlessRoute();
+	if (!ensureManagedVlessRoute()) {
 		return;
 	}
 
@@ -1116,10 +1088,7 @@ bool Call::handleUpdate(const MTPPhoneCall &call) {
 
 void Call::finishByMigration(const QString &slug) {
 	Expects(!conferenceInvite());
-	if (_managedVlessIntent
-		|| _managedVlessRouteFailed
-		|| Core::App().settings().proxy().vlessEnabled()) {
-		failManagedVlessRoute();
+	if (!ensureManagedVlessRoute()) {
 		return;
 	}
 
@@ -1283,9 +1252,7 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 		return;
 	}
 
-	_conferenceSupported = _managedVlessIntent
-		? false
-		: call.is_conference_supported();
+	_conferenceSupported = call.is_conference_supported();
 
 	const auto &protocol = call.vprotocol().c_phoneCallProtocol();
 	const auto &serverConfig = _user->session().serverConfig();
@@ -1827,14 +1794,14 @@ void Call::setupManagedVless() {
 		const auto selected = settings.selected();
 		if (settings.isEnabled()
 			&& Core::App().vlessProxyRunning()
-			&& IsManagedVlessProxy(selected)) {
+			&& Core::IsManagedVlessProxy(selected)) {
 			_managedVlessProxy = selected;
 		}
 #ifdef TDESKTOP_VLESS_DEBUG_LOGS
 		DEBUG_LOG((
 			"Call VLESS Debug: call created with managed route intent; "
 			"sidecar readiness is %1."
-		).arg(Logs::b(IsManagedVlessProxy(_managedVlessProxy))));
+		).arg(Logs::b(Core::IsManagedVlessProxy(_managedVlessProxy))));
 #endif // TDESKTOP_VLESS_DEBUG_LOGS
 	}
 	Core::App().proxyChanges(
@@ -1849,7 +1816,8 @@ void Call::setupManagedVless() {
 }
 
 bool Call::managedVlessRouteAvailable() const {
-	if (!_managedVlessIntent || !IsManagedVlessProxy(_managedVlessProxy)) {
+	if (!_managedVlessIntent
+		|| !Core::IsManagedVlessProxy(_managedVlessProxy)) {
 		return false;
 	}
 	const auto &settings = Core::App().settings().proxy();

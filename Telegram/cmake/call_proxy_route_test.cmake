@@ -139,3 +139,41 @@ add_custom_target(check_socks5_udp_socket
 add_dependencies(check_socks5_udp_socket test_socks5_udp_socket)
 
 add_dependencies(Telegram check_socks5_udp_socket)
+
+add_executable(test_group_proxy_route)
+init_target(test_group_proxy_route "(tests)")
+
+target_include_directories(test_group_proxy_route
+PRIVATE
+    ${call_proxy_tgcalls_loc}
+)
+
+nice_target_sources(test_group_proxy_route ${src_loc}
+PRIVATE
+    tests/test_group_proxy_route.cpp
+)
+
+target_link_libraries(test_group_proxy_route
+PRIVATE
+    tdesktop::lib_tgcalls
+    desktop-app::external_webrtc
+)
+
+set_target_properties(test_group_proxy_route PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_test(
+    NAME group_proxy_route_policy
+    COMMAND "../$<CONFIG>/test_group_proxy_route" --policy-only
+)
+set_tests_properties(group_proxy_route_policy PROPERTIES TIMEOUT 30)
+
+add_custom_target(check_group_proxy_route_policy
+    COMMAND $<TARGET_FILE:test_group_proxy_route> --policy-only
+    VERBATIM
+)
+
+add_dependencies(check_group_proxy_route_policy test_group_proxy_route)
+
+add_dependencies(Telegram check_group_proxy_route_policy)
