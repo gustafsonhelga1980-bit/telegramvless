@@ -1559,6 +1559,8 @@ void Call::handleControllerStateChange(tgcalls::State state) {
 		handleControllerError(error);
 	} break;
 
+	case tgcalls::State::Reconnecting: break;
+
 	default: LOG(("Call Error: Unexpected state in handleStateChange: %1"
 		).arg(int(state)));
 	}
