@@ -212,42 +212,8 @@ void ComputeInstallationTag() {
 	}
 }
 
-bool MoveLegacyAlphaFolder(const QString &folder, const QString &file) {
-	const auto was = cExeDir() + folder;
-	const auto now = cExeDir() + u"TelegramForcePortable"_q;
-	if (QDir(was).exists() && !QDir(now).exists()) {
-		const auto oldFile = was + "/tdata/" + file;
-		const auto newFile = was + "/tdata/alpha";
-		if (QFile::exists(oldFile) && !QFile::exists(newFile)) {
-			if (!QFile(oldFile).copy(newFile)) {
-				LOG(("FATAL: Could not copy '%1' to '%2'").arg(
-					oldFile,
-					newFile));
-				return false;
-			}
-		}
-		if (!QDir().rename(was, now)) {
-			LOG(("FATAL: Could not rename '%1' to '%2'").arg(was, now));
-			return false;
-		}
-	}
-	return true;
-}
-
-bool MoveLegacyAlphaFolder() {
-	if (!MoveLegacyAlphaFolder(u"TelegramAlpha_data"_q, u"alpha"_q)
-		|| !MoveLegacyAlphaFolder(u"TelegramBeta_data"_q, u"beta"_q)) {
-		return false;
-	}
-	return true;
-}
-
 bool CheckPortableVersionFolder() {
-	if (!MoveLegacyAlphaFolder()) {
-		return false;
-	}
-
-	const auto portable = cExeDir() + u"TelegramForcePortable"_q;
+	const auto portable = cExeDir() + AppName.utf16() + u"ForcePortable"_q;
 	QFile key(portable + u"/tdata/alpha"_q);
 	if (cAlphaVersion()) {
 		Assert(*AlphaPrivateKey != 0);
@@ -336,7 +302,7 @@ void Launcher::init() {
 	prepareSettings();
 	initQtMessageLogging();
 
-	QApplication::setApplicationName(u"TelegramDesktop"_q);
+	QApplication::setApplicationName(AppName.utf16());
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 	// fallback session management is useless for tdesktop since it doesn't have

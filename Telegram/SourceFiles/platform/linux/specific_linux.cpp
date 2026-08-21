@@ -347,44 +347,6 @@ bool GenerateDesktopFile(
 			| QFileDevice::ExeGroup
 			| QFileDevice::ExeOther);
 
-	if (!Core::UpdaterDisabled()) {
-		DEBUG_LOG(("App Info: removing old .desktop files"));
-		QFile::remove(u"%1telegram.desktop"_q.arg(targetPath));
-		QFile::remove(u"%1telegramdesktop.desktop"_q.arg(targetPath));
-
-		const auto appimagePath = u"file://%1%2"_q.arg(
-			cExeDir(),
-			cExeName()).toUtf8();
-
-		char md5Hash[33] = { 0 };
-		hashMd5Hex(
-			appimagePath.constData(),
-			appimagePath.size(),
-			md5Hash);
-
-		QFile::remove(u"%1appimagekit_%2-%3.desktop"_q.arg(
-			targetPath,
-			md5Hash,
-			AppName.utf16().replace(' ', '_')));
-
-		const auto d = QFile::encodeName(QDir(cWorkingDir()).absolutePath());
-		hashMd5Hex(d.constData(), d.size(), md5Hash);
-
-		if (!Core::Launcher::Instance().customWorkingDir()) {
-			QFile::remove(u"%1org.telegram.desktop._%2.desktop"_q.arg(
-				targetPath,
-				md5Hash));
-
-			const auto exePath = QFile::encodeName(
-				cExeDir() + cExeName());
-			hashMd5Hex(exePath.constData(), exePath.size(), md5Hash);
-		}
-
-		QFile::remove(u"%1org.telegram.desktop.%2.desktop"_q.arg(
-			targetPath,
-			md5Hash));
-	}
-
 	return true;
 }
 
@@ -429,19 +391,6 @@ bool GenerateServiceFile(bool silent = false) {
 			LOG(("App Error: %1").arg(saved.error().message_().c_str()));
 		}
 		return false;
-	}
-
-	if (!Core::UpdaterDisabled()
-			&& !Core::Launcher::Instance().customWorkingDir()) {
-		DEBUG_LOG(("App Info: removing old D-Bus service files"));
-
-		char md5Hash[33] = { 0 };
-		const auto d = QFile::encodeName(QDir(cWorkingDir()).absolutePath());
-		hashMd5Hex(d.constData(), d.size(), md5Hash);
-
-		QFile::remove(u"%1org.telegram.desktop._%2.service"_q.arg(
-			targetPath,
-			md5Hash));
 	}
 
 	XdgDBus::DBusProxy::new_for_bus(
@@ -489,7 +438,6 @@ void InstallLauncher() {
 
 	const auto icon = appIcons + ApplicationIconName() + u".png"_q;
 	QFile::remove(icon);
-	QFile::remove(icons + u"telegram.png"_q);
 	if (QFile::copy(u":/gui/art/logo_256.png"_q, icon)) {
 		DEBUG_LOG(("App Info: Icon copied to '%1'").arg(icon));
 	}
@@ -685,19 +633,6 @@ QString ExecutablePathForShortcuts() {
 } // namespace Platform
 
 QString psAppDataPath() {
-	// Previously we used ~/.TelegramDesktop, so look there first.
-	// If we find data there, we should still use it.
-	auto home = QDir::homePath();
-	if (!home.isEmpty()) {
-		auto oldPath = home + u"/.TelegramDesktop/"_q;
-		auto oldSettingsBase = oldPath + u"tdata/settings"_q;
-		if (QFile::exists(oldSettingsBase + '0')
-			|| QFile::exists(oldSettingsBase + '1')
-			|| QFile::exists(oldSettingsBase + 's')) {
-			return oldPath;
-		}
-	}
-
 	return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + '/';
 }
 
@@ -737,11 +672,11 @@ void start() {
 		}
 
 		if (!Core::UpdaterDisabled()) {
-			return u"org.telegram.desktop._%1"_q.arg(
+			return AppLinuxId.utf16() + u"._%1"_q.arg(
 				Core::Launcher::Instance().instanceHash().constData());
 		}
 
-		return u"org.telegram.desktop"_q;
+		return AppLinuxId.utf16();
 	}());
 
 	LOG(("App ID: %1").arg(QGuiApplication::desktopFileName()));
