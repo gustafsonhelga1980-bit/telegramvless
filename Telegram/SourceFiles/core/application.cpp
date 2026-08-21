@@ -17,7 +17,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/event_filter.h"
 #include "base/invoke_queued.h"
 #include "base/concurrent_timer.h"
-#include "base/options.h"
 #include "base/qt_signal_producer.h"
 #include "base/timer.h"
 #include "base/unixtime.h"
@@ -136,17 +135,9 @@ void SetCrashAnnotationsGL() {
 #endif // DESKTOP_APP_USE_ANGLE
 }
 
-base::options::toggle OptionSkipUrlSchemeRegister({
-	.id = kOptionSkipUrlSchemeRegister,
-	.name = "Skip URL scheme register",
-	.description = "Don't re-register tg:// URL scheme on autoupdate.",
-});
-
 } // namespace
 
 Application *Application::Instance = nullptr;
-
-const char kOptionSkipUrlSchemeRegister[] = "skip-url-scheme-register";
 
 struct Application::Private {
 	base::Timer quitTimer;
@@ -302,7 +293,6 @@ void Application::run() {
 	refreshGlobalProxy(); // Depends on app settings being read.
 
 	if (const auto old = Local::oldSettingsVersion(); old < AppVersion) {
-		autoRegisterUrlScheme();
 		Platform::NewVersionLaunched(old);
 	}
 
@@ -462,12 +452,6 @@ void Application::run() {
 
 	Test::Fire(u"launch_finished"_q);
 	Test::Start();
-}
-
-void Application::autoRegisterUrlScheme() {
-	if (!OptionSkipUrlSchemeRegister.value()) {
-		InvokeQueued(this, [] { RegisterUrlScheme(); });
-	}
 }
 
 void Application::showAccount(not_null<Main::Account*> account) {
@@ -2262,7 +2246,7 @@ void Application::startShortcuts() {
 	}, _lifetime);
 }
 
-void Application::RegisterUrlScheme() {
+void Application::RegisterUrlSchemeByUserRequest() {
 	const auto arguments = Launcher::Instance().customWorkingDir()
 		? u"-workdir \"%1\""_q.arg(cWorkingDir())
 		: QString();
@@ -2272,7 +2256,7 @@ void Application::RegisterUrlScheme() {
 		.arguments = arguments,
 		.protocol = u"tg"_q,
 		.protocolName = u"Telegram Link"_q,
-		.shortAppName = u"tdesktop"_q,
+		.shortAppName = u"tevless"_q,
 		.longAppName = QCoreApplication::applicationName(),
 		.displayAppName = AppName.utf16(),
 		.displayAppDescription = AppName.utf16(),
@@ -2283,7 +2267,7 @@ void Application::RegisterUrlScheme() {
 		.arguments = arguments,
 		.protocol = u"tonsite"_q,
 		.protocolName = u"TonSite Link"_q,
-		.shortAppName = u"tdesktop"_q,
+		.shortAppName = u"tevless"_q,
 		.longAppName = QCoreApplication::applicationName(),
 		.displayAppName = AppName.utf16(),
 		.displayAppDescription = AppName.utf16(),

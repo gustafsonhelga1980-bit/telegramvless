@@ -131,8 +131,6 @@ enum class QuitReason {
 	QtQuitEvent,
 };
 
-extern const char kOptionSkipUrlSchemeRegister[];
-
 class Application final : public QObject {
 public:
 	struct ProxyChange {
@@ -358,7 +356,7 @@ public:
 	void setScreenIsLocked(bool locked);
 	bool screenIsLocked() const;
 
-	static void RegisterUrlScheme();
+	static void RegisterUrlSchemeByUserRequest();
 
 protected:
 	bool eventFilter(QObject *object, QEvent *event) override;
@@ -369,7 +367,6 @@ private:
 	friend bool IsAppLaunched();
 	friend Application &App();
 
-	void autoRegisterUrlScheme();
 	void clearEmojiSourceImages();
 	[[nodiscard]] auto prepareEmojiSourceImages()
 		-> std::shared_ptr<Ui::Emoji::UniversalImages>;

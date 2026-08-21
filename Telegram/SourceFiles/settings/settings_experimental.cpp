@@ -456,7 +456,6 @@ void SetupExperimental(
 			u"System"_q,
 			{
 				MTP::details::kOptionPreferIPv6,
-				Core::kOptionSkipUrlSchemeRegister,
 				Core::kOptionDeadlockDetector,
 				Webview::kOptionWebviewDebugEnabled,
 				Webview::kOptionWebviewLegacyEdge,

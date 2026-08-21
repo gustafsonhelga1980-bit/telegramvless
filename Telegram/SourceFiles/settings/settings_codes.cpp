@@ -165,7 +165,7 @@ auto GenerateCodes() {
 		}
 	});
 	codes.emplace(u"registertg"_q, [](SessionController *window) {
-		Core::Application::RegisterUrlScheme();
+		Core::Application::RegisterUrlSchemeByUserRequest();
 		Ui::Toast::Show("Forced custom scheme register.");
 	});
 	codes.emplace(u"numberbuttons"_q, [](SessionController *window) {
