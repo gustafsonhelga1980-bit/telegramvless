@@ -47,6 +47,7 @@ endif()
 
 include(cmake/vless_profile_test.cmake)
 include(cmake/call_proxy_route_test.cmake)
+include(cmake/webview_proxy_route_test.cmake)
 
 if (WIN32)
     include(cmake/generate_midl.cmake)
@@ -533,6 +534,7 @@ PRIVATE
     chat_helpers/ttl_media_layer_widget.h
     core/application.cpp
     core/application.h
+    core/webview_network.h
     core/proxy_rotation_manager.cpp
     core/proxy_rotation_manager.h
     core/vless_manager.cpp
@@ -573,6 +575,8 @@ PRIVATE
     core/deep_links/deep_links_types.h
     core/external_control.cpp
     core/external_control.h
+    core/external_link_policy.cpp
+    core/external_link_policy.h
     core/file_utilities.cpp
     core/file_utilities.h
     core/launcher.cpp

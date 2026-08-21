@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "base/qt/qt_key_modifiers.h"
 #include "base/qt_signal_producer.h"
+#include "core/webview_network.h"
 #include "core/file_utilities.h"
 #include "lang/lang_keys.h"
 #include "ui/chat/attach/attach_bot_webview.h"
@@ -297,8 +298,17 @@ void Controller::createWebview(const Webview::StorageId &storageId) {
 			.opaqueBg = st::windowBg->c,
 			.storageId = storageId,
 			.safe = true,
+			.network = Core::WebviewNetwork(),
 		});
 	const auto raw = _webview.get();
+	raw->setCloseHandler([=] {
+		if (_webview.get() == raw) {
+			base::take(_webview);
+		}
+		crl::on_main(_window.get(), [=] {
+			close();
+		});
+	});
 
 	if (const auto webviewZoomController = raw->zoomController()) {
 		webviewZoomController->zoomValue(
@@ -343,6 +353,9 @@ void Controller::createWebview(const Webview::StorageId &storageId) {
 		}
 	}, _container->lifetime());
 
+	const auto activateLink = [=](const QString &uri) {
+		_events.fire({ .type = Event::Type::OpenLink, .url = uri });
+	};
 	raw->setNavigationStartHandler([=](const QString &uri, bool newWindow) {
 		Q_UNUSED(newWindow);
 
@@ -350,8 +363,11 @@ void Controller::createWebview(const Webview::StorageId &storageId) {
 			|| QUrl(uri).host().toLower().endsWith(u".magic.org"_q)) {
 			return true;
 		}
-		_events.fire({ .type = Event::Type::OpenLink, .url = uri });
+		activateLink(uri);
 		return false;
+	});
+	raw->setExternalNavigationHandler([=](const QString &uri) {
+		_events.fire({ .type = Event::Type::OpenLinkExternal, .url = uri });
 	});
 	raw->setNavigationDoneHandler([=](bool success) {
 		Q_UNUSED(success);

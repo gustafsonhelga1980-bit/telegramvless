@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "core/click_handler_types.h"
 #include "core/credits_amount.h"
+#include "core/external_link_policy.h"
 #include "core/file_utilities.h"
 #include "iv/markdown/iv_markdown_article_text.h"
 #include "iv/markdown/iv_markdown_embed_overlay.h"
@@ -211,6 +212,7 @@ private:
 	void activateLink(const PreparedLink &link, Qt::MouseButton button);
 	void closeEmbed();
 	void openEmbedLink(QString url);
+	void openEmbedExternalLink(QString url);
 	void showFootnote(const PreparedLink &link, Qt::MouseButton button);
 	[[nodiscard]] bool showEmbed(const MediaActivation &activation);
 	void fillFootnoteBox(
@@ -331,6 +333,9 @@ void MarkdownPreviewRoot::setup() {
 		this,
 		[=](QString url) {
 			openEmbedLink(std::move(url));
+		},
+		[=](QString url) {
+			openEmbedExternalLink(std::move(url));
 		},
 		_options.ivWebviewStorageId);
 	_embedOverlay->hide();
@@ -577,6 +582,16 @@ void MarkdownPreviewRoot::openEmbedLink(QString url) {
 	}
 	closeEmbed();
 	HiddenUrlClickHandler::Open(url, CurrentClickHandlerContext(_options));
+}
+
+void MarkdownPreviewRoot::openEmbedExternalLink(QString url) {
+	if (url.isEmpty()) {
+		return;
+	}
+	closeEmbed();
+	const auto context = CurrentClickHandlerContext(_options)
+		.value<ClickHandlerContext>();
+	Core::ExternalLinkPolicy::OpenUrl(url, context.show);
 }
 
 void MarkdownPreviewRoot::showFootnote(

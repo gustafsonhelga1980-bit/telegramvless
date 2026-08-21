@@ -41,7 +41,8 @@ constexpr auto kProcessStartTimeout = 3000;
 constexpr auto kReadinessTimeout = 5000;
 constexpr auto kReadinessStabilization = 250;
 constexpr auto kProbeRetryDelay = 25;
-constexpr auto kProbeSlice = 100;
+constexpr auto kProbeSlice = 1000;
+constexpr auto kMaxHttpProbeBytes = 4096;
 constexpr auto kStopTimeout = 1500;
 constexpr auto kExpectedXraySha256
 	= "8255dd939c34cf966cc91517b6324dd3c8d0bcf49ffac8beca049a38c46845ed";
@@ -66,6 +67,12 @@ void Wipe(MTP::ProxyData &proxy) {
 	proxy = MTP::ProxyData();
 }
 
+void Wipe(VlessWebProxy &proxy) {
+	Wipe(proxy.user);
+	Wipe(proxy.password);
+	proxy = VlessWebProxy();
+}
+
 [[nodiscard]] bool UnsafePermissions(const QFileInfo &info) {
 	const auto permissions = info.permissions();
 	return permissions.testFlag(QFileDevice::WriteGroup)
@@ -82,12 +89,14 @@ struct PreparedStart {
 	SidecarPath sidecar;
 	QByteArray config;
 	MTP::ProxyData proxy;
+	VlessWebProxy webProxy;
 	VlessError error = VlessError::None;
 };
 
 void Wipe(PreparedStart &prepared) {
 	Wipe(prepared.config);
 	Wipe(prepared.proxy);
+	Wipe(prepared.webProxy);
 }
 
 void ConfigureSidecarProcess(
@@ -177,16 +186,31 @@ void ConfigureSidecarProcess(
 	if (sidecar.error != VlessError::None) {
 		return { .error = sidecar.error };
 	}
-	const auto port = AllocateLoopbackPort();
-	if (!port) {
+	const auto socksPort = AllocateLoopbackPort();
+	const auto webPort = AllocateLoopbackPort();
+	if (!socksPort || !webPort || socksPort == webPort) {
 		return { .error = VlessError::PortAllocationFailed };
 	}
-	auto user = RandomCredential();
-	auto password = RandomCredential();
-	auto config = parsed.profile->xrayConfig(port, user, password);
+	auto socksUser = RandomCredential();
+	auto socksPassword = RandomCredential();
+	auto webUser = RandomCredential();
+	auto webPassword = RandomCredential();
+	auto config = parsed.profile->xrayConfig(
+		{
+			.port = socksPort,
+			.user = socksUser,
+			.password = socksPassword,
+		},
+		{
+			.port = webPort,
+			.user = webUser,
+			.password = webPassword,
+		});
 	if (config.isEmpty()) {
-		Wipe(user);
-		Wipe(password);
+		Wipe(socksUser);
+		Wipe(socksPassword);
+		Wipe(webUser);
+		Wipe(webPassword);
 		return { .error = VlessError::ConfigurationFailed };
 	}
 	return {
@@ -195,9 +219,15 @@ void ConfigureSidecarProcess(
 		.proxy = {
 			.type = MTP::ProxyData::Type::Socks5,
 			.host = u"127.0.0.1"_q,
-			.port = port,
-			.user = std::move(user),
-			.password = std::move(password),
+			.port = socksPort,
+			.user = std::move(socksUser),
+			.password = std::move(socksPassword),
+		},
+		.webProxy = {
+			.host = u"127.0.0.1"_q,
+			.port = webPort,
+			.user = std::move(webUser),
+			.password = std::move(webPassword),
 		},
 	};
 }
@@ -221,6 +251,8 @@ struct VlessManager::Private final
 		Greeting,
 		Authentication,
 		UdpAssociation,
+		HttpChallenge,
+		HttpAuthentication,
 	};
 
 	~Private();
@@ -237,6 +269,7 @@ struct VlessManager::Private final
 	void candidateStarted(uint64 id, not_null<QProcess*> process);
 	void candidateFinished(not_null<QProcess*> process);
 	void beginProbe(uint64 id);
+	void beginHttpProbe(uint64 id, uint64 probeId, bool authenticated);
 	void readProbe(uint64 id, uint64 probeId);
 	void probeFailed(uint64 id, uint64 probeId);
 	void probeSucceeded(uint64 id, uint64 probeId);
@@ -260,6 +293,8 @@ struct VlessManager::Private final
 	QByteArray probeReply;
 	MTP::ProxyData candidateProxy;
 	MTP::ProxyData activeProxy;
+	VlessWebProxy candidateWebProxy;
+	VlessWebProxy activeWebProxy;
 	QPointer<QProcess> testProcess;
 	QPointer<QProcess> candidateProcess;
 	QPointer<QProcess> activeProcess;
@@ -289,6 +324,8 @@ VlessManager::Private::~Private() {
 	Wipe(config);
 	Wipe(candidateProxy);
 	Wipe(activeProxy);
+	Wipe(candidateWebProxy);
+	Wipe(activeWebProxy);
 }
 
 bool VlessManager::Private::attempt(uint64 id, Phase expected) const {
@@ -324,6 +361,7 @@ void VlessManager::Private::prepared(uint64 id, PreparedStart result) {
 	if (!attempt(id, Phase::Preparing)) {
 		Wipe(result.config);
 		Wipe(result.proxy);
+		Wipe(result.webProxy);
 		return;
 	} else if (result.error != VlessError::None) {
 		failAttempt(result.error);
@@ -332,6 +370,7 @@ void VlessManager::Private::prepared(uint64 id, PreparedStart result) {
 	sidecar = std::move(result.sidecar);
 	config = std::move(result.config);
 	candidateProxy = std::move(result.proxy);
+	candidateWebProxy = std::move(result.webProxy);
 #ifdef TDESKTOP_VLESS_DEBUG_LOGS
 	DEBUG_LOG(("VLESS Debug: sidecar configuration prepared."));
 #endif // TDESKTOP_VLESS_DEBUG_LOGS
@@ -465,7 +504,8 @@ void VlessManager::Private::candidateStarted(
 	process->closeWriteChannel();
 	phase = Phase::Probing;
 #ifdef TDESKTOP_VLESS_DEBUG_LOGS
-	DEBUG_LOG(("VLESS Debug: sidecar started; probing authenticated UDP."));
+	DEBUG_LOG((
+		"VLESS Debug: sidecar started; probing authenticated inbounds."));
 #endif // TDESKTOP_VLESS_DEBUG_LOGS
 	QTimer::singleShot(kReadinessTimeout, this, [=] {
 		if (generation == id
@@ -531,6 +571,73 @@ void VlessManager::Private::beginProbe(uint64 id) {
 	});
 }
 
+void VlessManager::Private::beginHttpProbe(
+		uint64 id,
+		uint64 probeId,
+		bool authenticated) {
+	if (generation != id
+		|| phase != Phase::Probing
+		|| probeGeneration != probeId) {
+		return;
+	}
+	if (const auto previous = probeSocket) {
+		probeSocket = nullptr;
+		QObject::disconnect(previous, nullptr, this, nullptr);
+		previous->abort();
+		previous->deleteLater();
+	}
+	probeStage = authenticated
+		? ProbeStage::HttpAuthentication
+		: ProbeStage::HttpChallenge;
+	probeReply.clear();
+	const auto socket = new QTcpSocket(this);
+	probeSocket = socket;
+	socket->setProxy(QNetworkProxy::NoProxy);
+	QObject::connect(socket, &QTcpSocket::connected, this, [=] {
+		if (generation != id
+			|| probeGeneration != probeId
+			|| probeSocket != socket) {
+			return;
+		}
+		auto request = QByteArray(
+			"CONNECT proxy-check.invalid:443 HTTP/1.1\r\n"
+			"Host: proxy-check.invalid:443\r\n");
+		if (authenticated) {
+			auto credentials = candidateWebProxy.user.toUtf8();
+			auto password = candidateWebProxy.password.toUtf8();
+			credentials += ':';
+			credentials += password;
+			auto encoded = credentials.toBase64();
+			request += "Proxy-Authorization: Basic ";
+			request += encoded;
+			request += "\r\n";
+			Wipe(credentials);
+			Wipe(password);
+			Wipe(encoded);
+		}
+		request += "Connection: close\r\n\r\n";
+		const auto size = request.size();
+		const auto accepted = socket->write(request);
+		Wipe(request);
+		if (accepted != size) {
+			probeFailed(id, probeId);
+		}
+	});
+	QObject::connect(socket, &QTcpSocket::readyRead, this, [=] {
+		readProbe(id, probeId);
+	});
+	QObject::connect(
+		socket,
+		&QTcpSocket::errorOccurred,
+		this,
+		[=](QAbstractSocket::SocketError) {
+			probeFailed(id, probeId);
+		});
+	socket->connectToHost(
+		QHostAddress::LocalHost,
+		candidateWebProxy.port);
+}
+
 void VlessManager::Private::readProbe(uint64 id, uint64 probeId) {
 	if (generation != id
 		|| probeGeneration != probeId
@@ -538,6 +645,36 @@ void VlessManager::Private::readProbe(uint64 id, uint64 probeId) {
 		return;
 	}
 	probeReply += probeSocket->readAll();
+	if (probeStage == ProbeStage::HttpChallenge
+		|| probeStage == ProbeStage::HttpAuthentication) {
+		if (probeReply.size() > kMaxHttpProbeBytes) {
+			probeFailed(id, probeId);
+			return;
+		}
+		const auto headersEnd = probeReply.indexOf("\r\n\r\n");
+		if (headersEnd < 0) {
+			return;
+		}
+		const auto headers = probeReply.left(headersEnd + 4).toLower();
+		if (probeStage == ProbeStage::HttpChallenge) {
+			if (!headers.startsWith("http/1.1 407 ")
+				|| !headers.contains("\r\nproxy-authenticate: basic")) {
+				probeFailed(id, probeId);
+				return;
+			}
+			beginHttpProbe(id, probeId, true);
+			return;
+		} else if (!headers.startsWith("http/1.1 200 ")) {
+			probeFailed(id, probeId);
+			return;
+		}
+#ifdef TDESKTOP_VLESS_DEBUG_LOGS
+		DEBUG_LOG((
+			"VLESS Debug: authenticated HTTP proxy CONNECT succeeded."));
+#endif // TDESKTOP_VLESS_DEBUG_LOGS
+		probeSucceeded(id, probeId);
+		return;
+	}
 	if (probeStage == ProbeStage::UdpAssociation) {
 		if (probeReply.size() < 4) {
 			return;
@@ -577,7 +714,7 @@ void VlessManager::Private::readProbe(uint64 id, uint64 probeId) {
 		DEBUG_LOG((
 			"VLESS Debug: authenticated SOCKS5 UDP association succeeded."));
 #endif // TDESKTOP_VLESS_DEBUG_LOGS
-		probeSucceeded(id, probeId);
+		beginHttpProbe(id, probeId, false);
 		return;
 	}
 	if (probeReply.size() < 2) {
@@ -673,7 +810,7 @@ void VlessManager::Private::candidateReady(uint64 id) {
 	confirmationProbe = false;
 #ifdef TDESKTOP_VLESS_DEBUG_LOGS
 	DEBUG_LOG((
-		"VLESS Debug: authenticated UDP readiness remained stable."));
+		"VLESS Debug: authenticated proxy readiness remained stable."));
 #endif // TDESKTOP_VLESS_DEBUG_LOGS
 	const auto done = std::move(callback);
 	if (done) {
@@ -725,6 +862,7 @@ void VlessManager::Private::clearAttempt() {
 	stopProcess(candidate);
 	Wipe(config);
 	Wipe(candidateProxy);
+	Wipe(candidateWebProxy);
 	sidecar = SidecarPath();
 	confirmationProbe = false;
 	phase = Phase::Idle;
@@ -761,9 +899,11 @@ bool VlessManager::Private::commit() {
 	}
 	const auto previous = activeProcess;
 	activeProcess = candidateProcess;
-	activeProxy = candidateProxy;
+	Wipe(activeProxy);
+	Wipe(activeWebProxy);
+	activeProxy = std::move(candidateProxy);
+	activeWebProxy = std::move(candidateWebProxy);
 	candidateProcess = nullptr;
-	Wipe(candidateProxy);
 	Wipe(config);
 	sidecar = SidecarPath();
 	confirmationProbe = false;
@@ -782,6 +922,7 @@ void VlessManager::Private::activeStopped(
 	QObject::disconnect(process, nullptr, this, nullptr);
 	process->deleteLater();
 	Wipe(activeProxy);
+	Wipe(activeWebProxy);
 #ifdef TDESKTOP_VLESS_DEBUG_LOGS
 	DEBUG_LOG(("VLESS Debug: active sidecar stopped."));
 #endif // TDESKTOP_VLESS_DEBUG_LOGS
@@ -795,6 +936,7 @@ void VlessManager::Private::stop() {
 	const auto process = activeProcess;
 	activeProcess = nullptr;
 	Wipe(activeProxy);
+	Wipe(activeWebProxy);
 	stopProcess(process);
 }
 
@@ -827,6 +969,17 @@ bool VlessManager::running() const {
 
 bool VlessManager::busy() const {
 	return _private->phase != Private::Phase::Idle;
+}
+
+std::optional<VlessWebProxy> VlessManager::webProxy() const {
+	if (!running()
+		|| _private->activeWebProxy.host != u"127.0.0.1"_q
+		|| !_private->activeWebProxy.port
+		|| _private->activeWebProxy.user.isEmpty()
+		|| _private->activeWebProxy.password.isEmpty()) {
+		return std::nullopt;
+	}
+	return _private->activeWebProxy;
 }
 
 rpl::producer<VlessError> VlessManager::failures() const {

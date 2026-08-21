@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include <rpl/producer.h>
 #include <memory>
+#include <optional>
 
 namespace Core {
 
@@ -37,6 +38,13 @@ struct VlessStartResult final {
 	}
 };
 
+struct VlessWebProxy final {
+	QString host;
+	uint16 port = 0;
+	QString user;
+	QString password;
+};
+
 class VlessManager final {
 public:
 	using StartCallback = Fn<void(VlessStartResult)>;
@@ -53,6 +61,7 @@ public:
 	void stop();
 	[[nodiscard]] bool running() const;
 	[[nodiscard]] bool busy() const;
+	[[nodiscard]] std::optional<VlessWebProxy> webProxy() const;
 	[[nodiscard]] rpl::producer<VlessError> failures() const;
 
 private:

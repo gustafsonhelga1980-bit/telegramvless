@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rect.h"
 #include "ui/ui_utility.h"
 #include "lang/lang_keys.h"
+#include "core/webview_network.h"
 #include "core/file_utilities.h"
 #include "webview/webview_embed.h"
 #include "webview/webview_dialog.h"
@@ -2146,8 +2147,17 @@ bool Panel::createWebview(const Webview::ThemeParams &params) {
 			.shellMessageToken = _externalShell
 				? _externalShellToken
 				: QString(),
+			.network = Core::WebviewNetwork(),
 		});
 	const auto raw = &_webview->window;
+	raw->setCloseHandler([=] {
+		if (_webview && &_webview->window == raw) {
+			base::take(_webview);
+		}
+		crl::on_main(this, [=] {
+			requestClose();
+		});
+	});
 
 	const auto bottom = _webviewBottom.get();
 	QObject::connect(container, &QObject::destroyed, [=] {
@@ -2439,6 +2449,11 @@ bool Panel::createWebview(const Webview::ThemeParams &params) {
 		_currentOrigin = OriginFromUrl(uri);
 		showWebviewProgress();
 		return true;
+	});
+	raw->setExternalNavigationHandler([=](QString uri) {
+		if (!_delegate->botHandleLocalUri(uri, false)) {
+			File::OpenUrl(uri);
+		}
 	});
 	raw->setNavigationDoneHandler([=](bool success) {
 		hideWebviewProgress();

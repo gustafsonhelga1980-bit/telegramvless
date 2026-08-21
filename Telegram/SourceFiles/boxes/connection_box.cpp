@@ -70,6 +70,42 @@ namespace {
 constexpr auto kSaveSettingsDelayedTimeout = crl::time(1000);
 
 using ProxyData = MTP::ProxyData;
+using ProxyMode = ProxiesBoxController::ProxyMode;
+
+[[nodiscard]] constexpr ProxyMode ResolveProxyMode(
+		ProxyData::Settings settings,
+		bool vlessEnabled) {
+	if (vlessEnabled) {
+		return ProxyMode::Vless;
+	}
+	switch (settings) {
+	case ProxyData::Settings::Disabled: return ProxyMode::Disabled;
+	case ProxyData::Settings::System: return ProxyMode::System;
+	case ProxyData::Settings::Enabled: return ProxyMode::Custom;
+	}
+	Unexpected("Bad settings in ResolveProxyMode.");
+}
+
+static_assert(ResolveProxyMode(ProxyData::Settings::Disabled, false)
+	== ProxyMode::Disabled);
+static_assert(ResolveProxyMode(ProxyData::Settings::System, false)
+	== ProxyMode::System);
+static_assert(ResolveProxyMode(ProxyData::Settings::Enabled, false)
+	== ProxyMode::Custom);
+static_assert(ResolveProxyMode(ProxyData::Settings::Enabled, true)
+	== ProxyMode::Vless);
+
+[[nodiscard]] QString VlessErrorText(Core::VlessError error) {
+	return (error == Core::VlessError::CallsActive)
+		? tr::lng_proxy_vless_calls_active(tr::now)
+		: (error == Core::VlessError::InvalidProfile)
+		? tr::lng_proxy_vless_invalid(tr::now)
+		: ((error == Core::VlessError::SidecarNotFound
+			|| error == Core::VlessError::SidecarNotExecutable
+			|| error == Core::VlessError::SidecarNotTrusted)
+			? tr::lng_proxy_vless_xray_missing(tr::now)
+			: tr::lng_proxy_vless_start_failed(tr::now));
+}
 
 [[nodiscard]] int ClosestProxyRotationTimeoutSection(int value) {
 	auto result = 0;
@@ -606,6 +642,7 @@ private:
 class ProxiesBox : public Ui::BoxContent {
 public:
 	using View = ProxiesBoxController::ItemView;
+	using ProxyMode = ProxiesBoxController::ProxyMode;
 
 	ProxiesBox(
 		QWidget*,
@@ -632,7 +669,7 @@ private:
 	not_null<ProxiesBoxController*> _controller;
 	Core::SettingsProxy &_settings;
 	QPointer<Ui::Checkbox> _tryIPv6;
-	std::shared_ptr<Ui::RadioenumGroup<ProxyData::Settings>> _proxySettings;
+	std::shared_ptr<Ui::RadioenumGroup<ProxyMode>> _proxyMode;
 	QPointer<Ui::SlideWrap<Ui::Checkbox>> _proxyForCalls;
 	QPointer<Ui::SlideWrap<Ui::Checkbox>> _proxyRotation;
 	QPointer<Ui::SlideWrap<Ui::VerticalLayout>> _proxyRotationOptions;
@@ -1126,29 +1163,35 @@ void ProxiesBox::setupContent() {
 			tr::lng_connection_try_ipv6(tr::now),
 			_settings.tryIPv6()),
 		st::proxyTryIPv6Padding);
-	_proxySettings
-		= std::make_shared<Ui::RadioenumGroup<ProxyData::Settings>>(
-			_settings.settings());
+	_proxyMode = std::make_shared<Ui::RadioenumGroup<ProxyMode>>(
+		_controller->proxyMode());
 	inner->add(
-		object_ptr<Ui::Radioenum<ProxyData::Settings>>(
+		object_ptr<Ui::Radioenum<ProxyMode>>(
 			inner,
-			_proxySettings,
-			ProxyData::Settings::Disabled,
+			_proxyMode,
+			ProxyMode::Disabled,
 			tr::lng_proxy_disable(tr::now)),
 		st::proxyUsePadding);
 	inner->add(
-		object_ptr<Ui::Radioenum<ProxyData::Settings>>(
+		object_ptr<Ui::Radioenum<ProxyMode>>(
 			inner,
-			_proxySettings,
-			ProxyData::Settings::System,
+			_proxyMode,
+			ProxyMode::System,
 			tr::lng_proxy_use_system_settings(tr::now)),
 		st::proxyUsePadding);
 	inner->add(
-		object_ptr<Ui::Radioenum<ProxyData::Settings>>(
+		object_ptr<Ui::Radioenum<ProxyMode>>(
 			inner,
-			_proxySettings,
-			ProxyData::Settings::Enabled,
+			_proxyMode,
+			ProxyMode::Custom,
 			tr::lng_proxy_use_custom(tr::now)),
+		st::proxyUsePadding);
+	inner->add(
+		object_ptr<Ui::Radioenum<ProxyMode>>(
+			inner,
+			_proxyMode,
+			ProxyMode::Vless,
+			tr::lng_proxy_use_vless(tr::now)),
 		st::proxyUsePadding);
 	_proxyForCalls = inner->add(
 		object_ptr<Ui::SlideWrap<Ui::Checkbox>>(
@@ -1224,10 +1267,14 @@ void ProxiesBox::setupContent() {
 		inner,
 		st::proxyRowPadding.bottom()));
 
-	_proxySettings->setChangedCallback([=](ProxyData::Settings value) {
-		if (!_controller->setProxySettings(value)) {
-			_proxySettings->setValue(_settings.settings());
-			addNewProxy();
+	_proxyMode->setChangedCallback([=](ProxyMode value) {
+		if (!_controller->setProxyMode(value)) {
+			_proxyMode->setValue(_controller->proxyMode());
+			if (value == ProxyMode::Vless) {
+				getDelegate()->show(_controller->vlessProxyBox());
+			} else {
+				addNewProxy();
+			}
 		}
 		refreshProxyForCalls();
 		refreshProxyRotation();
@@ -1237,9 +1284,9 @@ void ProxiesBox::setupContent() {
 		_controller->setTryIPv6(checked);
 	}, _tryIPv6->lifetime());
 
-	_controller->proxySettingsValue(
-	) | rpl::on_next([=](ProxyData::Settings value) {
-		_proxySettings->setValue(value);
+	_controller->proxyModeValue(
+	) | rpl::on_next([=](ProxyMode value) {
+		_proxyMode->setValue(value);
 		refreshProxyForCalls();
 		refreshProxyRotation();
 	}, inner->lifetime());
@@ -1306,7 +1353,7 @@ void ProxiesBox::refreshProxyForCalls() {
 		return;
 	}
 	_proxyForCalls->toggle(
-		(_proxySettings->current() == ProxyData::Settings::Enabled
+		(_proxyMode->current() == ProxyMode::Custom
 			&& _currentProxySupportsCallsId != 0),
 		anim::type::normal);
 }
@@ -1315,9 +1362,7 @@ void ProxiesBox::refreshProxyRotation() {
 	if (!_proxyRotation || !_proxyRotationOptions) {
 		return;
 	}
-	const auto visible = (_proxySettings->current()
-			== ProxyData::Settings::Enabled)
-		&& !_settings.vlessEnabled()
+	const auto visible = (_proxyMode->current() == ProxyMode::Custom)
 		&& _settings.selected()
 		&& (_settings.list().size() > 1);
 	_proxyRotation->toggle(visible, anim::type::normal);
@@ -1721,7 +1766,10 @@ ProxiesBoxController::ProxiesBoxController(not_null<Main::Account*> account)
 
 	_settings.connectionTypeChanges(
 	) | rpl::on_next([=] {
-		_proxySettingsChanges.fire_copy(_settings.settings());
+		if (!Core::App().vlessProxyChanging()) {
+			_proxyModeOverride.reset();
+		}
+		_proxyModeChanges.fire_copy(proxyMode());
 		_vlessStateChanges.fire({});
 		for (const auto &item : _list) {
 			updateView(item);
@@ -2010,10 +2058,16 @@ void ProxiesBoxController::ShowApplyConfirmation(
 	}
 }
 
-auto ProxiesBoxController::proxySettingsValue() const
--> rpl::producer<ProxyData::Settings> {
-	return _proxySettingsChanges.events_starting_with_copy(
-		_settings.settings()
+ProxiesBoxController::ProxyMode ProxiesBoxController::proxyMode() const {
+	return _proxyModeOverride.value_or(ResolveProxyMode(
+		_settings.settings(),
+		_settings.vlessEnabled()));
+}
+
+auto ProxiesBoxController::proxyModeValue() const
+-> rpl::producer<ProxyMode> {
+	return _proxyModeChanges.events_starting_with_copy(
+		proxyMode()
 	) | rpl::distinct_until_changed();
 }
 
@@ -2165,9 +2219,10 @@ void ProxiesBoxController::applyItem(int id) {
 
 	auto j = findByProxy(_settings.selected());
 
-	Core::App().setCurrentProxy(
+	applyProxyMode(
 		item->data,
-		ProxyData::Settings::Enabled);
+		ProxyData::Settings::Enabled,
+		ProxyMode::Custom);
 	saveDelayed();
 
 	if (j != end(_list)) {
@@ -2222,30 +2277,40 @@ object_ptr<Ui::BoxContent> ProxiesBoxController::vlessProxyBox() {
 					box->setCloseByEscape(true);
 					box->setCloseByOutsideClick(true);
 					field->showError();
-					const auto text
-						= (error == Core::VlessError::CallsActive)
-						? tr::lng_proxy_vless_calls_active(tr::now)
-						: (error == Core::VlessError::InvalidProfile)
-						? tr::lng_proxy_vless_invalid(tr::now)
-						: ((error == Core::VlessError::SidecarNotFound
-							|| error == Core::VlessError::SidecarNotExecutable
-							|| error == Core::VlessError::SidecarNotTrusted)
-							? tr::lng_proxy_vless_xray_missing(tr::now)
-							: tr::lng_proxy_vless_start_failed(tr::now));
-					box->uiShow()->showToast(text);
+					box->uiShow()->showToast(VlessErrorText(error));
 				}));
 		});
 		if (!current.isEmpty()) {
-			box->addLeftButton(tr::lng_box_remove(), [=] {
+			const auto remove = box->addLeftButton(
+				tr::lng_box_remove(),
+				[] {});
+			remove->setClickedCallback([=] {
 				if (save->isDisabled()) {
 					return;
 				}
-				if (Core::App().clearVlessProxy()) {
-					box->closeBox();
-				} else {
+				save->clearState();
+				save->setDisabled(true);
+				cancel->clearState();
+				cancel->setDisabled(true);
+				remove->clearState();
+				remove->setDisabled(true);
+				field->setDisabled(true);
+				box->setCloseByEscape(false);
+				box->setCloseByOutsideClick(false);
+				Core::App().clearVlessProxy(crl::guard(box, [=](bool success) {
+					if (success) {
+						box->closeBox();
+						return;
+					}
+					save->setDisabled(false);
+					cancel->setDisabled(false);
+					remove->setDisabled(false);
+					field->setDisabled(false);
+					box->setCloseByEscape(true);
+					box->setCloseByOutsideClick(true);
 					box->uiShow()->showToast(
 						tr::lng_proxy_vless_remove_failed(tr::now));
-				}
+				}));
 			});
 		}
 	});
@@ -2264,9 +2329,10 @@ void ProxiesBoxController::setDeleted(int id, bool deleted) {
 			_settings.setSelected(MTP::ProxyData());
 			if (_settings.isEnabled()) {
 				_lastSelectedProxyUsed = true;
-				Core::App().setCurrentProxy(
+				applyProxyMode(
 					ProxyData(),
-					ProxyData::Settings::System);
+					ProxyData::Settings::System,
+					ProxyMode::System);
 				saveDelayed();
 			} else {
 				_lastSelectedProxyUsed = false;
@@ -2292,9 +2358,10 @@ void ProxiesBoxController::setDeleted(int id, bool deleted) {
 			Assert(!_settings.isEnabled());
 
 			if (base::take(_lastSelectedProxyUsed)) {
-				Core::App().setCurrentProxy(
+				applyProxyMode(
 					base::take(_lastSelectedProxy),
-					ProxyData::Settings::Enabled);
+					ProxyData::Settings::Enabled,
+					ProxyMode::Custom);
 			} else {
 				_settings.setSelected(base::take(_lastSelectedProxy));
 			}
@@ -2389,10 +2456,46 @@ void ProxiesBoxController::addNewItem(const ProxyData &proxy) {
 	applyItem(_list.back().id);
 }
 
-bool ProxiesBoxController::setProxySettings(ProxyData::Settings value) {
-	if (_settings.settings() == value) {
+bool ProxiesBoxController::setProxyMode(ProxyMode value) {
+	if (proxyMode() == value) {
 		return true;
-	} else if (value == ProxyData::Settings::Enabled) {
+	} else if (value == ProxyMode::Vless) {
+		const auto url = Core::App().vlessUrl();
+		if (url.isEmpty()) {
+			return false;
+		}
+		const auto generation = ++_proxyModeGeneration;
+		_proxyModeOverride = value;
+		_proxyModeChanges.fire_copy(value);
+		Core::App().setCurrentVlessProxy(
+			url,
+			crl::guard(this, [=](Core::VlessError error) {
+				if (error == Core::VlessError::None
+					|| generation != _proxyModeGeneration
+					|| Core::App().vlessProxyChanging()) {
+					return;
+				}
+				_proxyModeOverride.reset();
+				_proxyModeChanges.fire_copy(proxyMode());
+				_show->showToast(VlessErrorText(error));
+			}));
+		return true;
+	}
+
+	const auto settings = [&] {
+		switch (value) {
+		case ProxyMode::Disabled:
+			return ProxyData::Settings::Disabled;
+		case ProxyMode::System:
+			return ProxyData::Settings::System;
+		case ProxyMode::Custom:
+			return ProxyData::Settings::Enabled;
+		case ProxyMode::Vless:
+			break;
+		}
+		Unexpected("Bad mode in setProxyMode.");
+	}();
+	if (value == ProxyMode::Custom) {
 		if (_settings.list().empty()) {
 			return false;
 		} else if (!_settings.selected()) {
@@ -2403,9 +2506,19 @@ bool ProxiesBoxController::setProxySettings(ProxyData::Settings value) {
 			}
 		}
 	}
-	Core::App().setCurrentProxy(_settings.selected(), value);
+	applyProxyMode(_settings.selected(), settings, value);
 	saveDelayed();
 	return true;
+}
+
+void ProxiesBoxController::applyProxyMode(
+		const ProxyData &proxy,
+		ProxyData::Settings settings,
+		ProxyMode mode) {
+	++_proxyModeGeneration;
+	_proxyModeOverride = mode;
+	_proxyModeChanges.fire_copy(mode);
+	Core::App().setCurrentProxy(proxy, settings);
 }
 
 void ProxiesBoxController::setProxyForCalls(bool enabled) {

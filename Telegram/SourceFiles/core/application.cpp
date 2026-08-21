@@ -95,6 +95,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/accessible/ui_accessible_factory.h"
 #include "ui/boxes/confirm_box.h"
 #include "core/cached_webview_availability.h"
+#include "core/webview_network.h"
+#include "webview/webview_embed.h"
 #include "test/test_agent.h"
 
 #include <QtCore/QStandardPaths>
@@ -868,6 +870,32 @@ void Application::setCurrentProxy(
 		const MTP::ProxyData &proxy,
 		MTP::ProxyData::Settings settings) {
 	auto &my = _private->settings.proxy();
+	const auto managed = my.vlessEnabled()
+		|| _private->vlessManager->running();
+	const auto cancelPending = _private->vlessManager->busy();
+	if (managed || cancelPending) {
+		_private->vlessChanging = true;
+		my.connectionTypeChangesNotify();
+		Webview::CloseAll(crl::guard(this, [=](bool stopped) {
+			if (!stopped) {
+				if (_private->vlessManager->busy()) {
+					_private->vlessManager->cancel();
+				}
+				_private->vlessChanging = false;
+				_private->settings.proxy().connectionTypeChangesNotify();
+				return;
+			}
+			setCurrentProxyNow(proxy, settings);
+		}));
+		return;
+	}
+	setCurrentProxyNow(proxy, settings);
+}
+
+void Application::setCurrentProxyNow(
+		const MTP::ProxyData &proxy,
+		MTP::ProxyData::Settings settings) {
+	auto &my = _private->settings.proxy();
 	auto selected = proxy;
 	const auto managed = my.vlessEnabled()
 		|| _private->vlessManager->running();
@@ -891,6 +919,7 @@ void Application::setCurrentProxy(
 	my.setSelected(selected);
 	my.setSettings(settings);
 	const auto now = current();
+	_private->vlessChanging = false;
 	refreshGlobalProxy();
 	_proxyChanges.fire({ was, now });
 	my.connectionTypeChangesNotify();
@@ -923,21 +952,33 @@ void Application::startStoredVlessProxy() {
 	_private->vlessChanging = true;
 	settings().proxy().connectionTypeChangesNotify();
 	const auto requested = _private->vlessUrl;
-	_private->vlessManager->prepare(requested, [=](VlessStartResult result) {
-		_private->vlessChanging = false;
-		if (!result
-			|| !settings().proxy().vlessEnabled()
-			|| _private->vlessUrl != requested) {
-			_private->vlessManager->cancel();
+	Webview::CloseAll(crl::guard(this, [=](bool stopped) {
+		if (!stopped) {
+			if (_private->vlessManager->busy()) {
+				_private->vlessManager->cancel();
+			}
+			_private->vlessChanging = false;
 			settings().proxy().connectionTypeChangesNotify();
 			return;
 		}
-		if (_private->vlessManager->commit()) {
-			applyVlessProxy(result.proxy);
-		} else {
-			settings().proxy().connectionTypeChangesNotify();
-		}
-	});
+		_private->vlessManager->prepare(
+			requested,
+			[=](VlessStartResult result) {
+				_private->vlessChanging = false;
+				if (!result
+					|| !settings().proxy().vlessEnabled()
+					|| _private->vlessUrl != requested) {
+					_private->vlessManager->cancel();
+					settings().proxy().connectionTypeChangesNotify();
+					return;
+				}
+				if (_private->vlessManager->commit()) {
+					applyVlessProxy(result.proxy);
+				} else {
+					settings().proxy().connectionTypeChangesNotify();
+				}
+			});
+	}));
 }
 
 void Application::setCurrentVlessProxy(
@@ -955,75 +996,107 @@ void Application::setCurrentVlessProxy(
 	}
 	_private->vlessChanging = true;
 	settings().proxy().connectionTypeChangesNotify();
-	_private->vlessManager->prepare(url, [=](VlessStartResult result) {
-		if (!result) {
-			_private->vlessChanging = false;
-			settings().proxy().connectionTypeChangesNotify();
-			done(result.error);
-			return;
-		}
-		if (calls().hasActiveMediaForVless()) {
-			_private->vlessManager->cancel();
-			_private->vlessChanging = false;
-			settings().proxy().connectionTypeChangesNotify();
-			done(VlessError::CallsActive);
-			return;
-		}
-		const auto previous = _private->vlessUrl;
-		if (!_domain->local().writeVlessUrl(url)) {
-			_private->vlessManager->cancel();
+	Webview::CloseAll(crl::guard(this, [=](bool stopped) {
+		if (!stopped) {
+			if (_private->vlessManager->busy()) {
+				_private->vlessManager->cancel();
+			}
 			_private->vlessChanging = false;
 			settings().proxy().connectionTypeChangesNotify();
 			done(VlessError::ConfigurationFailed);
 			return;
 		}
-		if (!_private->vlessManager->commit()) {
-			const auto restored = previous.isEmpty()
-				? _domain->local().clearVlessUrl()
-				: _domain->local().writeVlessUrl(previous);
-			_private->vlessChanging = false;
-			if (!restored) {
-				_private->vlessUrl = _domain->local().readVlessUrl().value_or(
-					QString());
-				_private->vlessManager->stop();
-				if (settings().proxy().vlessEnabled()) {
-					vlessProxyFailed();
+		_private->vlessManager->prepare(url, [=](VlessStartResult result) {
+			if (!result) {
+				_private->vlessChanging = false;
+				settings().proxy().connectionTypeChangesNotify();
+				done(result.error);
+				return;
+			}
+			if (calls().hasActiveMediaForVless()) {
+				_private->vlessManager->cancel();
+				_private->vlessChanging = false;
+				settings().proxy().connectionTypeChangesNotify();
+				done(VlessError::CallsActive);
+				return;
+			}
+			const auto previous = _private->vlessUrl;
+			if (!_domain->local().writeVlessUrl(url)) {
+				_private->vlessManager->cancel();
+				_private->vlessChanging = false;
+				settings().proxy().connectionTypeChangesNotify();
+				done(VlessError::ConfigurationFailed);
+				return;
+			}
+			if (!_private->vlessManager->commit()) {
+				const auto restored = previous.isEmpty()
+					? _domain->local().clearVlessUrl()
+					: _domain->local().writeVlessUrl(previous);
+				_private->vlessChanging = false;
+				if (!restored) {
+					_private->vlessUrl = _domain->local().readVlessUrl().value_or(
+						QString());
+					_private->vlessManager->stop();
+					if (settings().proxy().vlessEnabled()) {
+						vlessProxyFailed();
+					} else {
+						settings().proxy().connectionTypeChangesNotify();
+					}
 				} else {
 					settings().proxy().connectionTypeChangesNotify();
 				}
-			} else {
-				settings().proxy().connectionTypeChangesNotify();
+				done(restored
+					? VlessError::ProcessExited
+					: VlessError::ConfigurationFailed);
+				return;
 			}
-			done(restored
-				? VlessError::ProcessExited
-				: VlessError::ConfigurationFailed);
-			return;
-		}
-		_private->vlessUrl = url;
-		_private->vlessChanging = false;
-		applyVlessProxy(result.proxy);
-		done(VlessError::None);
-	});
+			_private->vlessUrl = url;
+			_private->vlessChanging = false;
+			applyVlessProxy(result.proxy);
+			done(VlessError::None);
+		});
+	}));
 }
 
-bool Application::clearVlessProxy() {
+void Application::clearVlessProxy(Fn<void(bool)> done) {
 	if (!_domain->started()
-		|| _private->vlessChanging
-		|| !_domain->local().clearVlessUrl()) {
-		return false;
+		|| _private->vlessChanging) {
+		done(false);
+		return;
 	}
-	const auto wasEnabled = settings().proxy().vlessEnabled();
-	_private->vlessUrl.clear();
-	_private->vlessManager->stop();
-	settings().proxy().setVlessEnabled(false);
-	settings().writePref<bool>(kVlessProxyEnabledKey, false);
-	if (wasEnabled) {
-		setCurrentProxy(MTP::ProxyData(), MTP::ProxyData::Settings::System);
-	} else {
-		settings().proxy().connectionTypeChangesNotify();
-	}
-	Local::writeSettings();
-	return true;
+	_private->vlessChanging = true;
+	settings().proxy().connectionTypeChangesNotify();
+	Webview::CloseAll(crl::guard(this, [=](bool stopped) {
+		if (!stopped) {
+			if (_private->vlessManager->busy()) {
+				_private->vlessManager->cancel();
+			}
+			_private->vlessChanging = false;
+			settings().proxy().connectionTypeChangesNotify();
+			done(false);
+			return;
+		} else if (!_domain->local().clearVlessUrl()) {
+			_private->vlessChanging = false;
+			settings().proxy().connectionTypeChangesNotify();
+			done(false);
+			return;
+		}
+		const auto wasEnabled = settings().proxy().vlessEnabled();
+		_private->vlessUrl.clear();
+		_private->vlessManager->stop();
+		settings().proxy().setVlessEnabled(false);
+		settings().writePref<bool>(kVlessProxyEnabledKey, false);
+		_private->vlessChanging = false;
+		if (wasEnabled) {
+			setCurrentProxy(
+				MTP::ProxyData(),
+				MTP::ProxyData::Settings::System);
+		} else {
+			settings().proxy().connectionTypeChangesNotify();
+		}
+		Local::writeSettings();
+		done(true);
+	}));
 }
 
 void Application::vlessProxyFailed() {
@@ -1031,17 +1104,34 @@ void Application::vlessProxyFailed() {
 	if (!proxy.vlessEnabled()) {
 		return;
 	}
-	const auto was = proxy.isEnabled()
-		? proxy.selected()
-		: MTP::ProxyData();
-	const auto sink = VlessProxySink();
-	proxy.setSelected(sink);
-	proxy.setSettings(MTP::ProxyData::Settings::Enabled);
-	refreshGlobalProxy();
-	_proxyChanges.fire({ was, sink });
+	_private->vlessChanging = true;
 	proxy.connectionTypeChangesNotify();
-	proxyRotationSettingsChanged();
-	Local::writeSettings();
+	Webview::CloseAll(crl::guard(this, [=](bool stopped) {
+		auto &proxy = settings().proxy();
+		if (!stopped) {
+			if (_private->vlessManager->busy()) {
+				_private->vlessManager->cancel();
+			}
+			LOG(("VLESS Error: WebView shutdown was not verified."));
+		}
+		if (!proxy.vlessEnabled()) {
+			_private->vlessChanging = false;
+			proxy.connectionTypeChangesNotify();
+			return;
+		}
+		const auto was = proxy.isEnabled()
+			? proxy.selected()
+			: MTP::ProxyData();
+		const auto sink = VlessProxySink();
+		proxy.setSelected(sink);
+		proxy.setSettings(MTP::ProxyData::Settings::Enabled);
+		_private->vlessChanging = _private->vlessManager->busy();
+		refreshGlobalProxy();
+		_proxyChanges.fire({ was, sink });
+		proxy.connectionTypeChangesNotify();
+		proxyRotationSettingsChanged();
+		Local::writeSettings();
+	}));
 }
 
 QString Application::vlessUrl() const {
@@ -1054,6 +1144,41 @@ bool Application::vlessProxyRunning() const {
 
 bool Application::vlessProxyChanging() const {
 	return _private->vlessChanging;
+}
+
+Webview::NetworkConfig Application::webviewNetwork() {
+	const auto &proxy = settings().proxy();
+	if (_private->vlessChanging) {
+		return { .mode = Webview::NetworkMode::Denied };
+	} else if (!proxy.vlessEnabled()) {
+		return { .mode = Webview::NetworkMode::System };
+	} else if (!proxy.isEnabled()
+		|| !_private->vlessManager->running()) {
+		return { .mode = Webview::NetworkMode::Denied };
+	}
+	const auto selected = proxy.selected();
+	const auto web = _private->vlessManager->webProxy();
+	if (selected.type != MTP::ProxyData::Type::Socks5
+		|| selected.host != u"127.0.0.1"_q
+		|| !selected.port
+		|| selected.user.isEmpty()
+		|| selected.password.isEmpty()
+		|| !web) {
+		return { .mode = Webview::NetworkMode::Denied };
+	}
+	return {
+		.mode = Webview::NetworkMode::HttpProxy,
+		.proxy = {
+			.host = web->host.toStdString(),
+			.port = web->port,
+			.username = web->user.toStdString(),
+			.password = web->password.toStdString(),
+		},
+	};
+}
+
+Webview::NetworkConfig WebviewNetwork() {
+	return App().webviewNetwork();
 }
 
 void Application::proxyRotationSettingsChanged() {

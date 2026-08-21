@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/effects/radial_animation.h"
 #include "ui/click_handler.h"
+#include "core/webview_network.h"
 #include "lang/lang_keys.h"
 #include "webview/webview_embed.h"
 #include "webview/webview_interface.h"
@@ -552,9 +553,18 @@ bool Panel::createWebview(const Webview::ThemeParams &params) {
 		Webview::WindowConfig{
 			.opaqueBg = params.bodyBg,
 			.storageId = _delegate->panelWebviewStorageId(),
+			.network = Core::WebviewNetwork(),
 		});
 
 	const auto raw = &_webview->window;
+	raw->setCloseHandler([=] {
+		if (_webview && &_webview->window == raw) {
+			base::take(_webview);
+		}
+		crl::on_main(this, [=] {
+			_delegate->panelCloseSure();
+		});
+	});
 	QObject::connect(container, &QObject::destroyed, [=] {
 		if (_webview && &_webview->window == raw) {
 			base::take(_webview);
@@ -611,6 +621,9 @@ bool Panel::createWebview(const Webview::ThemeParams &params) {
 		}
 		showWebviewProgress();
 		return true;
+	});
+	raw->setExternalNavigationHandler([=](QString uri) {
+		_delegate->panelOpenUrl(uri);
 	});
 	raw->setNavigationDoneHandler([=](bool success) {
 		hideWebviewProgress();

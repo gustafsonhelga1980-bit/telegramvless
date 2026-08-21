@@ -8,14 +8,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/vless_profile.h"
 
 #include <QtCore/QCoreApplication>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QFileInfo>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QProcess>
 #include <QtCore/QProcessEnvironment>
+#include <QtCore/QThread>
 #include <QtCore/QUrl>
+#include <QtNetwork/QHostAddress>
+#include <QtNetwork/QNetworkProxy>
+#include <QtNetwork/QTcpServer>
+#include <QtNetwork/QTcpSocket>
 
+#include <algorithm>
 #include <iostream>
 #include <optional>
 #include <vector>
@@ -23,6 +30,26 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace {
 
 constexpr auto kLocalPort = 10808;
+constexpr auto kLocalHttpPort = 10809;
+constexpr auto kRuntimeTimeout = 5000;
+constexpr auto kProbeTimeout = 1500;
+constexpr auto kMaxHttpResponseBytes = 4096;
+
+[[nodiscard]] Core::VlessLocalInbound SyntheticSocksInbound() {
+	return {
+		.port = kLocalPort,
+		.user = u"synthetic-user"_q,
+		.password = u"synthetic-password"_q,
+	};
+}
+
+[[nodiscard]] Core::VlessLocalInbound SyntheticHttpInbound() {
+	return {
+		.port = kLocalHttpPort,
+		.user = u"synthetic-web-user"_q,
+		.password = u"synthetic-web-password"_q,
+	};
+}
 
 struct RejectedUrl final {
 	const char *name = nullptr;
@@ -37,6 +64,107 @@ void Check(bool condition, const char *message) {
 		std::cerr << "FAILED: " << message << '\n';
 		++Failures;
 	}
+}
+
+struct HttpResponse final {
+	int status = 0;
+	QByteArray headers;
+};
+
+[[nodiscard]] int Remaining(
+		const QElapsedTimer &timer,
+		int timeout) {
+	return std::max(0, timeout - int(timer.elapsed()));
+}
+
+[[nodiscard]] HttpResponse ConnectThroughHttpProxy(
+		quint16 proxyPort,
+		quint16 destinationPort,
+		const QByteArray &authorization = {}) {
+	auto socket = QTcpSocket();
+	socket.setProxy(QNetworkProxy::NoProxy);
+	auto timer = QElapsedTimer();
+	timer.start();
+	socket.connectToHost(QHostAddress::LocalHost, proxyPort);
+	if (!socket.waitForConnected(Remaining(timer, kProbeTimeout))) {
+		return {};
+	}
+
+	const auto authority = QByteArray("127.0.0.1:")
+		+ QByteArray::number(destinationPort);
+	auto request = QByteArray("CONNECT ")
+		+ authority
+		+ " HTTP/1.1\r\nHost: "
+		+ authority
+		+ "\r\nProxy-Connection: close\r\n";
+	if (!authorization.isEmpty()) {
+		request += "Proxy-Authorization: Basic "
+			+ authorization.toBase64()
+			+ "\r\n";
+	}
+	request += "\r\n";
+	if (socket.write(request) != request.size()
+		|| (socket.bytesToWrite() > 0
+			&& !socket.waitForBytesWritten(
+				Remaining(timer, kProbeTimeout)))) {
+		return {};
+	}
+
+	auto response = QByteArray();
+	while (!response.contains("\r\n\r\n")
+		&& response.size() <= kMaxHttpResponseBytes) {
+		const auto remaining = Remaining(timer, kProbeTimeout);
+		if (!remaining) {
+			break;
+		}
+		if (!socket.bytesAvailable() && !socket.waitForReadyRead(remaining)) {
+			response += socket.readAll();
+			break;
+		}
+		response += socket.readAll();
+	}
+	const auto headerEnd = response.indexOf("\r\n\r\n");
+	if (headerEnd < 0 || headerEnd > kMaxHttpResponseBytes) {
+		return {};
+	}
+	response.truncate(headerEnd + 4);
+	const auto statusEnd = response.indexOf("\r\n");
+	const auto fields = response.left(statusEnd).split(' ');
+	bool validStatus = false;
+	const auto status = (fields.size() >= 2)
+		? fields.at(1).toInt(&validStatus)
+		: 0;
+	return {
+		.status = validStatus ? status : 0,
+		.headers = std::move(response),
+	};
+}
+
+[[nodiscard]] bool HasBasicProxyChallenge(const QByteArray &headers) {
+	for (const auto &line : headers.split('\n')) {
+		const auto separator = line.indexOf(':');
+		if (separator > 0
+			&& line.left(separator).trimmed().toLower()
+				== "proxy-authenticate"
+			&& line.mid(separator + 1).trimmed().toLower()
+				.startsWith("basic")) {
+			return true;
+		}
+	}
+	return false;
+}
+
+[[nodiscard]] bool StopXray(QProcess &process) {
+	if (process.state() == QProcess::NotRunning) {
+		return true;
+	}
+	process.terminate();
+	if (process.waitForFinished(3000)) {
+		return true;
+	}
+	process.kill();
+	process.waitForFinished(1000);
+	return false;
 }
 
 [[nodiscard]] QString Scheme() {
@@ -166,8 +294,12 @@ void Check(bool condition, const char *message) {
 void CheckCommonConfig(const QJsonObject &root) {
 	const auto log = ObjectAt(root, u"log"_q);
 	Check(log.value(u"access"_q) == u"none"_q, "disabled Xray access log");
-	const auto inbound = FirstObjectAt(root, u"inbounds"_q);
-	Check(!inbound.isEmpty(), "generated exactly one inbound object");
+	const auto inbounds = root.value(u"inbounds"_q).toArray();
+	Check(inbounds.size() == 2, "generated two inbound objects");
+	if (inbounds.size() != 2) {
+		return;
+	}
+	const auto inbound = inbounds.at(0).toObject();
 	Check(inbound.value(u"listen"_q) == u"127.0.0.1"_q, "bound to loopback");
 	Check(inbound.value(u"port"_q).toInt() == kLocalPort, "used local port");
 	Check(inbound.value(u"protocol"_q) == u"socks"_q, "used SOCKS inbound");
@@ -182,6 +314,25 @@ void CheckCommonConfig(const QJsonObject &root) {
 			"preserved SOCKS user");
 		Check(account.value(u"pass"_q) == u"synthetic-password"_q,
 			"preserved SOCKS password");
+	}
+	const auto http = inbounds.at(1).toObject();
+	Check(http.value(u"listen"_q) == u"127.0.0.1"_q,
+		"bound HTTP proxy to loopback");
+	Check(http.value(u"port"_q).toInt() == kLocalHttpPort,
+		"used local HTTP port");
+	Check(http.value(u"protocol"_q) == u"http"_q,
+		"used HTTP proxy inbound");
+	const auto httpSettings = ObjectAt(http, u"settings"_q);
+	Check(httpSettings.value(u"allowTransparent"_q) == false,
+		"disabled transparent HTTP forwarding");
+	const auto httpAccounts = httpSettings.value(u"accounts"_q).toArray();
+	Check(httpAccounts.size() == 1, "generated one HTTP proxy account");
+	if (httpAccounts.size() == 1) {
+		const auto user = httpAccounts.at(0).toObject();
+		Check(user.value(u"user"_q) == u"synthetic-web-user"_q,
+			"preserved HTTP proxy user");
+		Check(user.value(u"pass"_q) == u"synthetic-web-password"_q,
+			"preserved HTTP proxy password");
 	}
 	const auto outbounds = root.value(u"outbounds"_q).toArray();
 	Check(outbounds.size() == 1, "generated one outbound");
@@ -213,9 +364,8 @@ void CheckCommonConfig(const QJsonObject &root) {
 		return std::nullopt;
 	}
 	auto config = parsed.profile->xrayConfig(
-		kLocalPort,
-		u"synthetic-user"_q,
-		u"synthetic-password"_q);
+		SyntheticSocksInbound(),
+		SyntheticHttpInbound());
 	QJsonParseError error;
 	const auto document = QJsonDocument::fromJson(config, &error);
 	if (error.error != QJsonParseError::NoError || !document.isObject()) {
@@ -642,18 +792,200 @@ void CheckCredentialLimits() {
 		return;
 	}
 	const auto maximum = QString(255, 'a');
-	Check(!parsed.profile->xrayConfig(kLocalPort, maximum, maximum).isEmpty(),
-		"accepted 255-byte SOCKS credentials");
+	const auto http = SyntheticHttpInbound();
+	Check(!parsed.profile->xrayConfig({
+		.port = kLocalPort,
+		.user = maximum,
+		.password = maximum,
+	}, http).isEmpty(), "accepted 255-byte SOCKS credentials");
 	Check(parsed.profile->xrayConfig(
-		kLocalPort,
-		QString(256, 'a'),
-		maximum).isEmpty(), "rejected 256-byte SOCKS username");
+		{
+			.port = kLocalPort,
+			.user = QString(256, 'a'),
+			.password = maximum,
+		},
+		http).isEmpty(), "rejected 256-byte SOCKS username");
 	Check(parsed.profile->xrayConfig(
-		kLocalPort,
-		maximum,
-		QString(256, 'a')).isEmpty(), "rejected 256-byte SOCKS password");
-	Check(parsed.profile->xrayConfig(kLocalPort, QString(), maximum).isEmpty(),
-		"rejected empty SOCKS username");
+		{
+			.port = kLocalPort,
+			.user = maximum,
+			.password = QString(256, 'a'),
+		},
+		http).isEmpty(), "rejected 256-byte SOCKS password");
+	Check(parsed.profile->xrayConfig({
+		.port = kLocalPort,
+		.password = maximum,
+	}, http).isEmpty(), "rejected empty SOCKS username");
+	Check(parsed.profile->xrayConfig(
+		SyntheticSocksInbound(),
+		{
+			.port = kLocalHttpPort,
+			.user = QString(256, 'a'),
+			.password = maximum,
+		}).isEmpty(), "rejected 256-byte HTTP username");
+	Check(parsed.profile->xrayConfig(
+		SyntheticSocksInbound(),
+		{
+			.port = kLocalHttpPort,
+			.user = maximum,
+			.password = QString(256, 'a'),
+		}).isEmpty(), "rejected 256-byte HTTP password");
+	Check(parsed.profile->xrayConfig(
+		SyntheticSocksInbound(),
+		{
+			.port = kLocalPort,
+			.user = maximum,
+			.password = maximum,
+		}).isEmpty(), "rejected duplicate local ports");
+}
+
+void CheckHttpProxyRuntime() {
+	const auto executable = qEnvironmentVariable("TDESKTOP_TEST_XRAY_PATH");
+	if (executable.isEmpty()) {
+		return;
+	}
+	const auto info = QFileInfo(executable);
+	if (!info.isFile() || !info.isExecutable()) {
+		Check(false, "found executable Xray for HTTP proxy runtime test");
+		return;
+	}
+
+	auto destination = QTcpServer();
+	auto socksReservation = QTcpServer();
+	auto httpReservation = QTcpServer();
+	for (const auto server : {
+		&destination,
+		&socksReservation,
+		&httpReservation,
+	}) {
+		server->setProxy(QNetworkProxy::NoProxy);
+	}
+	if (!destination.listen(QHostAddress::LocalHost, 0)
+		|| !socksReservation.listen(QHostAddress::LocalHost, 0)
+		|| !httpReservation.listen(QHostAddress::LocalHost, 0)) {
+		Check(false, "reserved loopback ports for HTTP proxy runtime test");
+		return;
+	}
+	const auto destinationPort = destination.serverPort();
+	const auto socksPort = socksReservation.serverPort();
+	const auto httpPort = httpReservation.serverPort();
+	socksReservation.close();
+	httpReservation.close();
+
+	const auto parsed = Core::ParseVlessProfile(
+		MakeUrl(RealityQuery(u"raw"_q)));
+	if (!parsed || !parsed.profile) {
+		Check(false, "parsed HTTP proxy runtime fixture");
+		return;
+	}
+	const auto webUser = u"synthetic-runtime-web-user"_q;
+	const auto webPassword = u"synthetic-runtime-web-password"_q;
+	auto config = parsed.profile->xrayConfig(
+		{
+			.port = socksPort,
+			.user = u"synthetic-runtime-socks-user"_q,
+			.password = u"synthetic-runtime-socks-password"_q,
+		},
+		{
+			.port = httpPort,
+			.user = webUser,
+			.password = webPassword,
+		});
+	auto document = QJsonDocument::fromJson(config);
+	if (config.isEmpty() || !document.isObject()) {
+		Check(false, "generated HTTP proxy runtime configuration");
+		config.fill('\0');
+		return;
+	}
+	auto root = document.object();
+	root.insert(u"outbounds"_q, QJsonArray{
+		QJsonObject{
+			{ u"tag"_q, u"vless-out"_q },
+			{ u"protocol"_q, u"freedom"_q },
+			{ u"settings"_q, QJsonObject() },
+		},
+	});
+	config.fill('\0');
+	config = QJsonDocument(root).toJson(QJsonDocument::Compact);
+
+	auto process = QProcess();
+	process.setProgram(info.canonicalFilePath());
+	process.setArguments({
+		u"run"_q,
+		u"-format"_q,
+		u"json"_q,
+		u"-c"_q,
+		u"stdin:"_q,
+	});
+	auto environment = QProcessEnvironment::systemEnvironment();
+	environment.insert(u"XRAY_LOCATION_ASSET"_q, info.absolutePath());
+	process.setProcessEnvironment(environment);
+	process.setStandardOutputFile(QProcess::nullDevice());
+	process.setStandardErrorFile(QProcess::nullDevice());
+	process.start(QIODevice::ReadWrite);
+	if (!process.waitForStarted(kRuntimeTimeout)) {
+		Check(false, "started Xray for HTTP proxy runtime test");
+		config.fill('\0');
+		return;
+	}
+	const auto configSize = config.size();
+	const auto accepted = process.write(config);
+	const auto written = (accepted == configSize)
+		&& (process.bytesToWrite() == 0
+			|| process.waitForBytesWritten(kRuntimeTimeout));
+	process.closeWriteChannel();
+	config.fill('\0');
+	if (!written) {
+		Check(false, "sent HTTP proxy runtime configuration to Xray");
+		Check(StopXray(process), "reaped Xray after configuration failure");
+		return;
+	}
+
+	auto startup = QElapsedTimer();
+	startup.start();
+	auto unauthenticated = HttpResponse();
+	do {
+		unauthenticated = ConnectThroughHttpProxy(
+			httpPort,
+			destinationPort);
+		if (unauthenticated.status || process.state() == QProcess::NotRunning) {
+			break;
+		}
+		QThread::msleep(25);
+	} while (startup.elapsed() < kRuntimeTimeout);
+	Check(unauthenticated.status == 407,
+		"rejected unauthenticated HTTP CONNECT with 407");
+	Check(HasBasicProxyChallenge(unauthenticated.headers),
+		"advertised Basic authentication for HTTP CONNECT");
+	Check(!destination.hasPendingConnections(),
+		"did not forward unauthenticated HTTP CONNECT");
+
+	const auto wrong = ConnectThroughHttpProxy(
+		httpPort,
+		destinationPort,
+		"synthetic-wrong-user:synthetic-wrong-password");
+	Check(wrong.status == 407,
+		"rejected wrong HTTP proxy credentials with 407");
+	Check(!destination.hasPendingConnections(),
+		"did not forward HTTP CONNECT with wrong credentials");
+
+	const auto valid = ConnectThroughHttpProxy(
+		httpPort,
+		destinationPort,
+		webUser.toUtf8() + ':' + webPassword.toUtf8());
+	Check(valid.status == 200,
+		"accepted valid HTTP proxy credentials with immediate 200");
+	Check(destination.hasPendingConnections()
+		|| destination.waitForNewConnection(kProbeTimeout),
+		"forwarded authenticated HTTP CONNECT to loopback target");
+	while (destination.hasPendingConnections()) {
+		destination.nextPendingConnection()->deleteLater();
+	}
+
+	Check(process.state() != QProcess::NotRunning,
+		"kept Xray alive through HTTP proxy runtime checks");
+	Check(StopXray(process),
+		"terminated and reaped Xray after HTTP proxy runtime checks");
 }
 
 [[nodiscard]] int ValidatePrivateInput() {
@@ -685,9 +1017,16 @@ void CheckCredentialLimits() {
 		return 3;
 	}
 	auto config = parsed.profile->xrayConfig(
-		kLocalPort,
-		u"validation-user"_q,
-		u"validation-password"_q);
+		{
+			.port = kLocalPort,
+			.user = u"validation-user"_q,
+			.password = u"validation-password"_q,
+		},
+		{
+			.port = kLocalHttpPort,
+			.user = u"validation-web-user"_q,
+			.password = u"validation-web-password"_q,
+		});
 	if (config.isEmpty()) {
 		std::cerr << "VLESS validation failed: configuration error.\n";
 		return 4;
@@ -719,6 +1058,7 @@ int main(int argc, char *argv[]) {
 	CheckEncryptedNoneSecurity();
 	CheckRejections();
 	CheckCredentialLimits();
+	CheckHttpProxyRuntime();
 
 	if (Failures != 0) {
 		std::cerr << Failures << " VLESS profile checks failed.\n";

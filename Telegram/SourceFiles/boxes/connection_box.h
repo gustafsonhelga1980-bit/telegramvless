@@ -9,9 +9,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/timer.h"
 #include "base/object_ptr.h"
+#include "base/weak_ptr.h"
 #include "core/core_settings_proxy.h"
 #include "mtproto/connection_abstract.h"
 #include "mtproto/mtproto_proxy_data.h"
+
+#include <optional>
 
 namespace Ui {
 class Show;
@@ -34,10 +37,16 @@ namespace Window {
 class SessionController;
 } // namespace Window
 
-class ProxiesBoxController {
+class ProxiesBoxController : public base::has_weak_ptr {
 public:
 	using ProxyData = MTP::ProxyData;
 	using Type = ProxyData::Type;
+	enum class ProxyMode {
+		Disabled,
+		System,
+		Custom,
+		Vless,
+	};
 
 	explicit ProxiesBoxController(not_null<Main::Account*> account);
 
@@ -84,12 +93,13 @@ public:
 	object_ptr<Ui::BoxContent> editItemBox(int id);
 	object_ptr<Ui::BoxContent> addNewItemBox();
 	object_ptr<Ui::BoxContent> vlessProxyBox();
-	bool setProxySettings(ProxyData::Settings value);
+	[[nodiscard]] bool setProxyMode(ProxyMode value);
 	void setProxyForCalls(bool enabled);
 	void setProxyRotationEnabled(bool enabled);
 	void setProxyRotationTimeout(int value);
 	void setTryIPv6(bool enabled);
-	rpl::producer<ProxyData::Settings> proxySettingsValue() const;
+	[[nodiscard]] ProxyMode proxyMode() const;
+	rpl::producer<ProxyMode> proxyModeValue() const;
 	rpl::producer<QString> vlessStateValue() const;
 
 	[[nodiscard]] bool contains(const ProxyData &proxy) const;
@@ -121,6 +131,10 @@ private:
 	void share(const ProxyData &proxy, bool qr = false);
 	void saveDelayed();
 	void refreshChecker(Item &item);
+	void applyProxyMode(
+		const ProxyData &proxy,
+		ProxyData::Settings settings,
+		ProxyMode mode);
 
 	void replaceItemWith(
 		std::vector<Item>::iterator which,
@@ -135,8 +149,10 @@ private:
 	std::vector<Item> _list;
 	rpl::event_stream<ItemView> _views;
 	base::Timer _saveTimer;
-	rpl::event_stream<ProxyData::Settings> _proxySettingsChanges;
+	rpl::event_stream<ProxyMode> _proxyModeChanges;
 	rpl::event_stream<> _vlessStateChanges;
+	std::optional<ProxyMode> _proxyModeOverride;
+	uint64 _proxyModeGeneration = 0;
 	std::shared_ptr<Ui::Show> _show;
 
 	ProxyData _lastSelectedProxy;

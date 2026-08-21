@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_location_manager.h"
 
 #include "mainwidget.h"
+#include "core/external_link_policy.h"
 #include "core/file_utilities.h"
 #include "lang/lang_keys.h"
 #include "ui/image/image.h"
@@ -23,6 +24,10 @@ QString LocationClickHandler::copyToClipboardContextItemText() const {
 }
 
 void LocationClickHandler::onClick(ClickContext context) const {
+	if (Core::ExternalLinkPolicy::Protected()) {
+		File::OpenUrl(_text);
+		return;
+	}
 	Platform::LaunchMaps(_point, [text = _text] {
 		File::OpenUrl(text);
 	});

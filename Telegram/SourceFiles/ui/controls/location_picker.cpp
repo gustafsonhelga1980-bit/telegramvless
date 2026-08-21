@@ -10,6 +10,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "base/platform/base_platform_info.h"
 #include "boxes/peer_list_box.h"
+#include "core/webview_network.h"
+#include "core/cached_webview_availability.h"
 #include "core/current_geo_location.h"
 #include "core/file_utilities.h"
 #include "data/data_document.h"
@@ -42,7 +44,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "webview/webview_data_stream_memory.h"
 #include "webview/webview_embed.h"
 #include "webview/webview_interface.h"
-#include "core/cached_webview_availability.h"
 #include "window/themes/window_theme.h"
 #include "styles/style_dialogs.h"
 #include "styles/style_location_picker.h"
@@ -892,6 +893,7 @@ void LocationPicker::setupWebview() {
 			.opaqueBg = st::windowBg->c,
 			.storageId = _webviewStorageId,
 			.safe = true,
+			.network = Core::WebviewNetwork(),
 		});
 	const auto raw = _webview.get();
 	if (!raw->widget()) {
@@ -899,6 +901,12 @@ void LocationPicker::setupWebview() {
 		showWebviewError();
 		return;
 	}
+	raw->setCloseHandler([=] {
+		if (_webview.get() == raw) {
+			_webview = nullptr;
+			close();
+		}
+	});
 
 	window->lifetime().add([=] {
 		_webview = nullptr;
@@ -918,7 +926,9 @@ void LocationPicker::setupWebview() {
 			_geocoderAddress.value()),
 		{ 0, st::pickLocationButtonSkip, 0, st::pickLocationButtonSkip });
 	_mapButton->setClickedCallback([=] {
-		_webview->eval("LocationPicker.send();");
+		if (_webview) {
+			_webview->eval("LocationPicker.send();");
+		}
 	});
 	_mapButton->hide();
 
@@ -949,16 +959,27 @@ void LocationPicker::setupWebview() {
 
 	_container->sizeValue(
 	) | rpl::on_next([=](QSize size) {
-		raw->widget()->setGeometry(QRect(QPoint(), size));
+		if (const auto webview = _webview.get()
+			; webview && webview == raw) {
+			if (const auto widget = webview->widget()) {
+				widget->setGeometry(QRect(QPoint(), size));
+			}
+		}
 	}, _container->lifetime());
 
 	raw->setNavigationStartHandler([=](const QString &uri, bool newWindow) {
 		return true;
 	});
+	raw->setExternalNavigationHandler([=](QString uri) {
+		File::OpenUrl(uri);
+	});
 	raw->setNavigationDoneHandler([=](bool success) {
 	});
 	raw->setMessageHandler([=](const QJsonDocument &message) {
 		crl::on_main(_window.get(), [=] {
+			if (!_webview || _webview.get() != raw) {
+				return;
+			}
 			const auto object = message.object();
 			const auto event = object.value("event").toString();
 			if (event == u"ready"_q) {
@@ -1140,6 +1161,9 @@ void LocationPicker::resolveAddress(Core::GeoLocation location) {
 
 void LocationPicker::mapReady() {
 	Expects(_scroll != nullptr);
+	if (!_webview) {
+		return;
+	}
 
 	delete base::take(_mapLoading);
 

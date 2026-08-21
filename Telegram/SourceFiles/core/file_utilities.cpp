@@ -7,17 +7,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "core/file_utilities.h"
 
-#include "core/version.h"
-#include "storage/localstorage.h"
-#include "storage/storage_account.h"
 #include "base/platform/base_platform_file_utilities.h"
-#include "platform/platform_file_utilities.h"
-#include "core/application.h"
 #include "base/unixtime.h"
-#include "ui/delayed_activation.h"
-#include "ui/chat/attach/attach_extensions.h"
+#include "core/application.h"
+#include "core/external_link_policy.h"
+#include "core/version.h"
 #include "main/main_session.h"
 #include "mainwindow.h"
+#include "platform/platform_file_utilities.h"
+#include "storage/localstorage.h"
+#include "storage/storage_account.h"
+#include "ui/chat/attach/attach_extensions.h"
+#include "ui/delayed_activation.h"
 
 #include <QtWidgets/QFileDialog>
 #include <QtCore/QCoreApplication>
@@ -125,15 +126,13 @@ namespace File {
 
 void OpenUrl(const QString &url) {
 	crl::on_main([=] {
-		Ui::PreventDelayedActivation();
-		Platform::File::UnsafeOpenUrl(url);
+		Core::ExternalLinkPolicy::OpenUrl(url);
 	});
 }
 
 void OpenEmailLink(const QString &email) {
 	crl::on_main([=] {
-		Ui::PreventDelayedActivation();
-		Platform::File::UnsafeOpenEmailLink(email);
+		Core::ExternalLinkPolicy::OpenEmailLink(email);
 	});
 }
 

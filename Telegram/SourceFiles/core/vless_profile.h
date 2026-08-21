@@ -52,14 +52,19 @@ enum class VlessProfileError {
 
 struct VlessProfileResult;
 
+struct VlessLocalInbound final {
+	uint16 port = 0;
+	QString user;
+	QString password;
+};
+
 struct VlessProfile final {
 	QString endpointHost;
 	uint16 endpointPort = 0;
 
 	[[nodiscard]] QByteArray xrayConfig(
-		uint16 localSocksPort,
-		const QString &localUser,
-		const QString &localPassword) const;
+		const VlessLocalInbound &socks,
+		const VlessLocalInbound &http) const;
 
 private:
 	QString _userId;

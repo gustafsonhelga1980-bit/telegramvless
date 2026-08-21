@@ -58,6 +58,7 @@ public:
 	EmbedOverlay(
 		QWidget *parent,
 		std::function<void(QString)> linkActivationCallback,
+		std::function<void(QString)> externalLinkActivationCallback,
 		Webview::StorageId storageId);
 	~EmbedOverlay();
 
@@ -126,6 +127,7 @@ private:
 
 	const QPointer<QWidget> _webviewParent;
 	const std::function<void(QString)> _linkActivationCallback;
+	const std::function<void(QString)> _externalLinkActivationCallback;
 	const Webview::StorageId _storageId;
 	Ui::RpWidget *_content = nullptr;
 	Ui::IconButton *_close = nullptr;

@@ -1658,10 +1658,11 @@ VlessProfileResult ParseVlessProfile(QStringView uri) {
 }
 
 QByteArray VlessProfile::xrayConfig(
-		uint16 localSocksPort,
-		const QString &localUser,
-		const QString &localPassword) const {
-	if (!localSocksPort
+		const VlessLocalInbound &socks,
+		const VlessLocalInbound &http) const {
+	if (!socks.port
+		|| !http.port
+		|| socks.port == http.port
 		|| !endpointPort
 		|| endpointHost.isEmpty()
 		|| ContainsSpace(endpointHost)
@@ -1670,8 +1671,10 @@ QByteArray VlessProfile::xrayConfig(
 		|| _encryption.isEmpty()
 		|| _transport.isEmpty()
 		|| _security.isEmpty()
-		|| !IsLocalCredentialValid(localUser)
-		|| !IsLocalCredentialValid(localPassword)) {
+		|| !IsLocalCredentialValid(socks.user)
+		|| !IsLocalCredentialValid(socks.password)
+		|| !IsLocalCredentialValid(http.user)
+		|| !IsLocalCredentialValid(http.password)) {
 		return {};
 	}
 
@@ -1781,7 +1784,7 @@ QByteArray VlessProfile::xrayConfig(
 				QJsonObject{
 					{ u"tag"_q, u"telegram-socks"_q },
 					{ u"listen"_q, u"127.0.0.1"_q },
-					{ u"port"_q, int(localSocksPort) },
+					{ u"port"_q, int(socks.port) },
 					{ u"protocol"_q, u"socks"_q },
 					{
 						u"settings"_q,
@@ -1791,12 +1794,33 @@ QByteArray VlessProfile::xrayConfig(
 								u"accounts"_q,
 								QJsonArray{
 									QJsonObject{
-										{ u"user"_q, localUser },
-										{ u"pass"_q, localPassword },
+										{ u"user"_q, socks.user },
+										{ u"pass"_q, socks.password },
 									}
 								}
 							},
 							{ u"udp"_q, true },
+						}
+					},
+				},
+				QJsonObject{
+					{ u"tag"_q, u"telegram-web"_q },
+					{ u"listen"_q, u"127.0.0.1"_q },
+					{ u"port"_q, int(http.port) },
+					{ u"protocol"_q, u"http"_q },
+					{
+						u"settings"_q,
+						QJsonObject{
+							{
+								u"accounts"_q,
+								QJsonArray{
+									QJsonObject{
+										{ u"user"_q, http.user },
+										{ u"pass"_q, http.password },
+									}
+								}
+							},
+							{ u"allowTransparent"_q, false },
 						}
 					},
 				}

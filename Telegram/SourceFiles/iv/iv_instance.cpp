@@ -774,6 +774,9 @@ void Instance::showOpenedPage(
 		const auto lower = event.url.toLower();
 		const auto urlChecked = lower.startsWith("http://")
 			|| lower.startsWith("https://");
+		const auto externalChecked = urlChecked
+			|| lower.startsWith("mailto:")
+			|| lower.startsWith("ton://");
 		const auto tonsite = lower.startsWith("tonsite://");
 		switch (event.type) {
 		case Type::Close:
@@ -789,7 +792,7 @@ void Instance::showOpenedPage(
 			processJoinChannel(event.context);
 			break;
 		case Type::OpenLinkExternal:
-			if (urlChecked) {
+			if (externalChecked) {
 				File::OpenUrl(event.url);
 				closeAll();
 			} else if (tonsite) {
@@ -1142,6 +1145,9 @@ void Instance::showTonSite(
 		const auto lower = event.url.toLower();
 		const auto urlChecked = lower.startsWith("http://")
 			|| lower.startsWith("https://");
+		const auto externalChecked = urlChecked
+			|| lower.startsWith("mailto:")
+			|| lower.startsWith("ton://");
 		const auto tonsite = lower.startsWith("tonsite://");
 		switch (event.type) {
 		case Type::Close:
@@ -1151,7 +1157,7 @@ void Instance::showTonSite(
 			Shortcuts::Launch(Shortcuts::Command::Quit);
 			break;
 		case Type::OpenLinkExternal:
-			if (urlChecked) {
+			if (externalChecked) {
 				File::OpenUrl(event.url);
 				closeAll();
 			} else if (tonsite) {

@@ -109,6 +109,10 @@ namespace Webrtc {
 class Environment;
 } // namespace Webrtc
 
+namespace Webview {
+struct NetworkConfig;
+} // namespace Webview
+
 namespace Core {
 
 struct LocalUrlHandler;
@@ -224,10 +228,11 @@ public:
 	void setCurrentVlessProxy(
 		const QString &url,
 		Fn<void(VlessError)> done);
-	[[nodiscard]] bool clearVlessProxy();
+	void clearVlessProxy(Fn<void(bool)> done);
 	[[nodiscard]] QString vlessUrl() const;
 	[[nodiscard]] bool vlessProxyRunning() const;
 	[[nodiscard]] bool vlessProxyChanging() const;
+	[[nodiscard]] Webview::NetworkConfig webviewNetwork();
 	void proxyRotationSettingsChanged();
 	void checkProxyRotation(not_null<Main::Account*> account, int32 state);
 	[[nodiscard]] rpl::producer<ProxyChange> proxyChanges() const;
@@ -376,6 +381,9 @@ private:
 	void startMediaView();
 	void startTray();
 	void startStoredVlessProxy();
+	void setCurrentProxyNow(
+		const MTP::ProxyData &proxy,
+		MTP::ProxyData::Settings settings);
 	void applyVlessProxy(const MTP::ProxyData &proxy);
 	void vlessProxyFailed();
 

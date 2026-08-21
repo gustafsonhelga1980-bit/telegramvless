@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "iv/markdown/iv_markdown_embed_overlay.h"
 
 #include "base/algorithm.h"
+#include "core/webview_network.h"
 #include "core/file_utilities.h"
 #include "ui/chat/attach/attach_bot_webview.h"
 #include "lang/lang_keys.h"
@@ -184,10 +185,12 @@ enum class LayoutMode {
 EmbedOverlay::EmbedOverlay(
 	QWidget *parent,
 	std::function<void(QString)> linkActivationCallback,
+	std::function<void(QString)> externalLinkActivationCallback,
 	Webview::StorageId storageId)
 : Ui::RpWidget(parent)
 , _webviewParent(parent)
 , _linkActivationCallback(std::move(linkActivationCallback))
+, _externalLinkActivationCallback(std::move(externalLinkActivationCallback))
 , _storageId(std::move(storageId))
 , _readyDelayTimer([=] {
 	revealReadyEmbed();
@@ -498,6 +501,7 @@ Webview::WindowConfig EmbedOverlay::makeWindowConfig() const {
 		.initialSize = UsesExternalWindow(_mode)
 			? externalInitialSize()
 			: QSize(),
+		.network = Core::WebviewNetwork(),
 	};
 }
 
@@ -531,6 +535,11 @@ void EmbedOverlay::ensureWebview() {
 		_webviewParent ? _webviewParent.data() : this,
 		makeWindowConfig());
 	const auto raw = _webview.get();
+	raw->setCloseHandler([=] {
+		if (_webview.get() == raw) {
+			closeEmbed();
+		}
+	});
 	const auto widget = raw->widget();
 	if (!widget) {
 		_webview = nullptr;
@@ -569,6 +578,11 @@ void EmbedOverlay::ensureWebview() {
 		return handleDataRequest(std::move(request));
 	});
 	raw->init(EmbedInitScript());
+	const auto activateExternalLink = [=](const QString &uri) {
+		if (_linkActivationCallback && !uri.isEmpty()) {
+			_linkActivationCallback(uri);
+		}
+	};
 	raw->setNavigationStartHandler([=](const QString &uri, bool newWindow) {
 		if (uri == u"about:blank"_q) {
 			return true;
@@ -579,10 +593,13 @@ void EmbedOverlay::ensureWebview() {
 		if (UsesExternalWindow(_mode) && !newWindow && !uri.isEmpty()) {
 			return true;
 		}
-		if (_linkActivationCallback && !uri.isEmpty()) {
-			_linkActivationCallback(uri);
-		}
+		activateExternalLink(uri);
 		return false;
+	});
+	raw->setExternalNavigationHandler([=](const QString &uri) {
+		if (_externalLinkActivationCallback && !uri.isEmpty()) {
+			_externalLinkActivationCallback(uri);
+		}
 	});
 	raw->setNavigationDoneHandler([=](bool success) {
 		crl::on_main(this, [=] {

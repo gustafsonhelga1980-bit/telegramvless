@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/bank_card_click_handler.h"
 #include "core/sandbox.h"
 #include "core/click_handler_types.h"
+#include "core/external_link_policy.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "data/data_session.h"
 #include "iv/iv_instance.h"
@@ -412,7 +413,13 @@ bool UiIntegration::handleUrlClick(
 	}
 
 	if (UrlClickHandler::IsEmail(url)) {
-		File::OpenEmailLink(url);
+		if (ExternalLinkPolicy::Protected()) {
+			ExternalLinkPolicy::OpenEmailLink(
+				url,
+				context.value<ClickHandlerContext>().show);
+		} else {
+			File::OpenEmailLink(url);
+		}
 		return true;
 	} else if (local.startsWith(u"tg://"_q, Qt::CaseInsensitive)) {
 		Core::App().openLocalUrl(local, context);
@@ -430,6 +437,12 @@ bool UiIntegration::handleUrlClick(
 			Core::App().iv().openWithIvPreferred(controller, url, context);
 			return true;
 		}
+	}
+	if (ExternalLinkPolicy::Protected()) {
+		ExternalLinkPolicy::OpenUrl(
+			url,
+			context.value<ClickHandlerContext>().show);
+		return true;
 	}
 
 	auto parsed = UrlForAutoLogin(url);

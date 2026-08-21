@@ -24,6 +24,7 @@ target_link_libraries(test_vless_profile
 PRIVATE
     desktop-app::external_gsl
     Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Network
 )
 
 set_target_properties(test_vless_profile PROPERTIES
