@@ -1067,7 +1067,7 @@ void Instance::requestPermissionOrFail(Platform::PermissionType type, Fn<void()>
 			_currentGroupCall->hangup();
 		}
 		Ui::show(Ui::MakeConfirmBox({
-			.text = tr::lng_no_mic_permission(),
+			.text = tr::lng_tevless_no_mic_permission(),
 			.confirmed = crl::guard(this, [=](Fn<void()> &&close) {
 				Platform::OpenSystemSettingsForPermission(type);
 				close();

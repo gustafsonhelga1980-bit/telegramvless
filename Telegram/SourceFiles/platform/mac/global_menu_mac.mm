@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "core/application.h"
 #include "core/sandbox.h"
+#include "core/version.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "window/main_window.h"
@@ -194,7 +195,7 @@ void Manager::retranslate() {
 		_newChannel->setText(tr::lng_mac_menu_new_channel(tr::now));
 	}
 	if (_showTelegram) {
-		_showTelegram->setText(tr::lng_mac_menu_show(tr::now));
+		_showTelegram->setText(tr::lng_tevless_mac_menu_show(tr::now));
 	}
 	if (_fullScreen) {
 		_fullScreen->setText(tr::lng_mac_menu_fullscreen(tr::now));
@@ -355,7 +356,7 @@ void Manager::buildAppleMenu(QMenu *main) {
 			});
 		};
 		const auto about = main->addAction(
-			u"About Telegram"_q,
+			u"About %1"_q.arg(AppName.utf16()),
 			std::move(callback));
 		about->setMenuRole(QAction::AboutQtRole);
 	}
@@ -599,7 +600,7 @@ void Manager::buildWindowMenu(QMenu *window) {
 }
 
 void Manager::buildMenu() {
-	buildAppleMenu(_menuBar->addMenu(u"Telegram"_q));
+	buildAppleMenu(_menuBar->addMenu(AppName.utf16()));
 	buildFileMenu(_menuBar->addMenu(u"File"_q));
 	buildEditMenu(_menuBar->addMenu(u"Edit"_q));
 	buildWindowMenu(_menuBar->addMenu(u"Window"_q));

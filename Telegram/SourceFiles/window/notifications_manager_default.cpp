@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_specific.h"
 #include "core/application.h"
 #include "core/ui_integration.h"
+#include "core/version.h"
 #include "chat_helpers/message_field.h"
 #include "lang/lang_keys.h"
 #include "ui/widgets/buttons.h"
@@ -1004,7 +1005,7 @@ void Notification::updateNotifyDisplay() {
 				: TextWithEntities{ name };
 		};
 		auto title = options.hideNameAndPhoto
-			? TextWithEntities{ u"Telegram Desktop"_q }
+			? TextWithEntities{ AppName.utf16() }
 			: reminder
 			? tr::lng_notification_reminder(tr::now, tr::marked)
 			: topicWithChat();

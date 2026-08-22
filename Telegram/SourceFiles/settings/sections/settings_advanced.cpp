@@ -677,7 +677,7 @@ void BuildSystemIntegrationSection(SectionBuilder &builder) {
 
 		const auto autostart = builder.addCheckbox({
 			.id = u"advanced/autostart"_q,
-			.title = tr::lng_settings_auto_start(),
+			.title = tr::lng_tevless_settings_auto_start(),
 			.checked = cAutoStart(),
 			.keywords = { u"autostart"_q, u"startup"_q, u"boot"_q },
 		});
@@ -731,7 +731,7 @@ void BuildSystemIntegrationSection(SectionBuilder &builder) {
 				if (controller->session().domain().local().hasLocalPasscode()) {
 					minimized->setChecked(false);
 					controller->show(Ui::MakeInformBox(
-						tr::lng_error_start_minimized_passcoded()));
+						tr::lng_tevless_error_start_minimized_passcoded()));
 				} else {
 					cSetStartMinimized(checked);
 					Local::writeSettings();
@@ -748,7 +748,7 @@ void BuildSystemIntegrationSection(SectionBuilder &builder) {
 	if (Platform::IsWindows() && !Platform::IsWindowsStoreBuild()) {
 		const auto sendto = builder.addCheckbox({
 			.id = u"advanced/sendto"_q,
-			.title = tr::lng_settings_add_sendto(),
+			.title = tr::lng_tevless_settings_add_sendto(),
 			.checked = cSendToMenu(),
 			.keywords = { u"sendto"_q, u"send"_q, u"menu"_q, u"context"_q },
 		});
@@ -1090,7 +1090,7 @@ void BuildUpdateSection(SectionBuilder &builder, bool atTop) {
 	if (check && container) {
 		const auto update = Ui::CreateChild<Ui::SettingsButton>(
 			check,
-			tr::lng_update_telegram(),
+			tr::lng_tevless_update_telegram(),
 			st::settingsUpdate);
 		update->hide();
 		check->widthValue() | rpl::on_next([=](int width) {
@@ -1432,7 +1432,7 @@ void SetupUpdate(not_null<Ui::VerticalLayout*> container) {
 		st::settingsButtonNoIcon));
 	const auto update = Ui::CreateChild<Button>(
 		check,
-		tr::lng_update_telegram(),
+		tr::lng_tevless_update_telegram(),
 		st::settingsUpdate);
 	update->hide();
 	check->widthValue() | rpl::on_next([=](int width) {
@@ -1849,7 +1849,7 @@ void SetupSystemIntegrationContent(
 		};
 
 		const auto autostart = addCheckbox(
-			tr::lng_settings_auto_start(),
+			tr::lng_tevless_settings_auto_start(),
 			cAutoStart());
 		const auto minimized = addSlidingCheckbox(
 			tr::lng_settings_start_min(),
@@ -1890,7 +1890,7 @@ void SetupSystemIntegrationContent(
 			if (controller->session().domain().local().hasLocalPasscode()) {
 				minimized->entity()->setChecked(false);
 				controller->show(Ui::MakeInformBox(
-					tr::lng_error_start_minimized_passcoded()));
+					tr::lng_tevless_error_start_minimized_passcoded()));
 			} else {
 				cSetStartMinimized(checked);
 				Local::writeSettings();
@@ -1905,7 +1905,7 @@ void SetupSystemIntegrationContent(
 
 	if (Platform::IsWindows() && !Platform::IsWindowsStoreBuild()) {
 		const auto sendto = addCheckbox(
-			tr::lng_settings_add_sendto(),
+			tr::lng_tevless_settings_add_sendto(),
 			cSendToMenu());
 
 		sendto->checkedChanges(

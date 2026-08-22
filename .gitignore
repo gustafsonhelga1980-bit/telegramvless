@@ -1,4 +1,5 @@
 /out/
+/out-asan-shutdown/
 Debug/
 Release/
 /ThirdParty/

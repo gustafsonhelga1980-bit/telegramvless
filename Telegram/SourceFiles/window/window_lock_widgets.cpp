@@ -222,7 +222,7 @@ void PasscodeLockWidget::suggestSystemUnlock() {
 			SuggestSystemUnlock(
 				this,
 				(::Platform::IsWindows()
-					? tr::lng_passcode_winhello_unlock(tr::now)
+					? tr::lng_tevless_passcode_winhello_unlock(tr::now)
 					: tr::lng_passcode_touchid_unlock(tr::now)),
 				done);
 		}, _systemUnlockSuggested);

@@ -222,6 +222,10 @@ void Application::closeAdditionalWindows() {
 }
 
 Application::~Application() {
+	// The preload task uses Qt image, file and OpenSSL facilities that are
+	// dismantled below. Finish it while all of those dependencies are alive.
+	Ui::FinishTextSpoilerMaskPreload();
+
 	if (_saveSettingsTimer && _saveSettingsTimer->isActive()) {
 		Local::writeSettings();
 	}
@@ -314,7 +318,7 @@ void Application::run() {
 	Ui::InitTextOptions();
 	Ui::StartCachedCorners();
 	Ui::Emoji::Init();
-	Ui::PreloadTextSpoilerMask();
+	Ui::PreloadTextSpoilerMask(_lifetime);
 	startShortcuts();
 	startEmojiImageLoader();
 	startSystemDarkModeViewer();
@@ -1531,7 +1535,7 @@ bool Application::openInternalUrl(const QString &url, QVariant context) {
 }
 
 QString Application::changelogLink() const {
-	return u"https://telegramdesktop.github.io/tdesktop/changelog/"_q;
+	return AppReleasesUrl.utf16();
 }
 
 bool Application::openCustomUrl(

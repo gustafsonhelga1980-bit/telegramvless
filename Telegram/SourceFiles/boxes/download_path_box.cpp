@@ -30,7 +30,7 @@ DownloadPathBox::DownloadPathBox(
 		this,
 		_group,
 		Directory::Downloads,
-		tr::lng_download_path_default_radio(tr::now),
+		tr::lng_tevless_download_path_default_radio(tr::now),
 		st::defaultBoxCheckbox)
 	: nullptr)
 , _temp(this, _group, Directory::Temp, tr::lng_download_path_temp_radio(tr::now), st::defaultBoxCheckbox)

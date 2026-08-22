@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/sandbox.h"
 #include "core/shortcuts.h"
+#include "core/version.h"
 #include "lang/lang_keys.h"
 #include "data/data_session.h"
 #include "data/data_forum_topic.h"
@@ -385,7 +386,7 @@ MainWindow::MainWindow(not_null<Controller*> controller)
 , _outdated(Ui::CreateOutdatedBar(body(), cWorkingDir()))
 , _screenReaderBar(Ui::CreateScreenReaderBar(body(), [=] {
 	controller->show(Ui::MakeConfirmBox({
-		.text = tr::lng_screen_reader_confirm_text(tr::now),
+		.text = tr::lng_tevless_screen_reader_confirm_text(tr::now),
 		.confirmed = [=](Fn<void()> close) {
 			Core::App().settings().writePref<bool>(
 				Core::kScreenReaderModeDisabledKey,
@@ -855,7 +856,7 @@ void MainWindow::updateTitle() {
 		: Dialogs::Key();
 	const auto thread = key ? key.thread() : nullptr;
 	if (!thread) {
-		setTitle((user.isEmpty() ? u"Telegram"_q : user) + added);
+		setTitle((user.isEmpty() ? AppName.utf16() : user) + added);
 		return;
 	}
 	const auto history = thread->owningHistory();

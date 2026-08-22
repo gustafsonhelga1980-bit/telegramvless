@@ -64,8 +64,8 @@ Bar::Bar(not_null<QWidget*> parent, QDate date)
 	_title->setTryMakeSimilarLines(true);
 	_details->setTryMakeSimilarLines(true);
 	_details->setText(_soon
-		? tr::lng_outdated_soon(tr::now, lt_date, langDayOfMonthFull(date))
-		: tr::lng_outdated_now(tr::now));
+		? tr::lng_tevless_outdated_soon(tr::now, lt_date, langDayOfMonthFull(date))
+		: tr::lng_tevless_outdated_now(tr::now));
 }
 
 rpl::producer<> Bar::hideClicks() const {

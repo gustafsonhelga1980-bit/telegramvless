@@ -2021,7 +2021,7 @@ void Element::validateText() {
 		if (!storyMention) {
 			if (_text.isEmpty()) {
 				setTextWithLinks(tr::italic(storyUnsupported
-					? tr::lng_stories_unsupported(tr::now)
+					? tr::lng_tevless_stories_unsupported(tr::now)
 					: tr::lng_forwarded_story_expired(tr::now)));
 			}
 			return;

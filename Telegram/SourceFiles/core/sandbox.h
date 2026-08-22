@@ -118,6 +118,7 @@ private:
 
 	void readClients();
 	void removeClients();
+	void closeLocalClients();
 
 	QEventLoopLocker _eventLoopLocker;
 	const Qt::HANDLE _mainThreadId = nullptr;
@@ -133,6 +134,9 @@ private:
 	QLocalServer _localServer;
 	QLocalSocket _localSocket;
 	LocalClients _localClients;
+	bool _readingClients = false;
+	bool _readClientsPending = false;
+	bool _closeLocalClientsAfterRead = false;
 	std::unique_ptr<QLockFile> _lockFile;
 	bool _secondInstance = false;
 	bool _started = false;

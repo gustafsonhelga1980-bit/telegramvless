@@ -94,7 +94,6 @@ private:
 	QString _switchingToLanguageId;
 	bool _switchingToLanguageWarning = false;
 
-	mtpRequestId _getKeysForSwitchRequestId = 0;
 
 	struct ValueRequest {
 		mtpRequestId requestId = 0;

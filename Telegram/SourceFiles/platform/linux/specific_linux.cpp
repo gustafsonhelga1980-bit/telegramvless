@@ -179,7 +179,7 @@ void PortalAutostart(bool enabled, Fn<void(bool)> done) {
 								GLib::Variant::new_string("reason"),
 								GLib::Variant::new_variant(
 									GLib::Variant::new_string(
-										tr::lng_settings_auto_start(tr::now)
+										tr::lng_tevless_settings_auto_start(tr::now)
 											.toStdString()))),
 							GLib::Variant::new_dict_entry(
 								GLib::Variant::new_string("autostart"),
@@ -232,7 +232,9 @@ bool GenerateDesktopFile(
 	DEBUG_LOG(("App Info: placing .desktop file to %1").arg(targetPath));
 	if (!QDir(targetPath).exists()) QDir().mkpath(targetPath);
 
-	const auto sourceFile = u":/misc/org.telegram.desktop.desktop"_q;
+	const auto sourceFile = u":/misc/"_q
+		+ AppLinuxId.utf16()
+		+ u".desktop"_q;
 	const auto targetFile = targetPath
 		+ QGuiApplication::desktopFileName()
 		+ u".desktop"_q;

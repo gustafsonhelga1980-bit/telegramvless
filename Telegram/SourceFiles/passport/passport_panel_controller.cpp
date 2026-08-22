@@ -963,7 +963,7 @@ void PanelController::showUpdateAppBox() {
 	};
 	show(
 		Ui::MakeConfirmBox({
-			.text = tr::lng_passport_app_out_of_date(),
+			.text = tr::lng_tevless_passport_app_out_of_date(),
 			.confirmed = callback,
 			.cancelled = [=] { _form->cancelSure(); },
 			.confirmText = tr::lng_menu_update(),

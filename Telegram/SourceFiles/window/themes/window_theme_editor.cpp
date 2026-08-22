@@ -835,7 +835,7 @@ QByteArray Editor::ColorizeInContent(
 
 void Editor::save() {
 	if (Core::App().passcodeLocked()) {
-		_window->showToast(tr::lng_theme_editor_need_unlock(tr::now));
+		_window->showToast(tr::lng_tevless_theme_editor_need_unlock(tr::now));
 		return;
 	} else if (!_window->account().sessionExists()) {
 		_window->showToast(tr::lng_theme_editor_need_auth(tr::now));

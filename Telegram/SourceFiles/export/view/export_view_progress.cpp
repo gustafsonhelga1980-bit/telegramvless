@@ -264,7 +264,7 @@ ProgressWidget::ProgressWidget(
 	_about = _body->add(
 		object_ptr<Ui::FlatLabel>(
 			this,
-			tr::lng_export_progress(tr::now),
+			tr::lng_tevless_export_progress(tr::now),
 			st::exportAboutLabel),
 		st::exportAboutPadding);
 

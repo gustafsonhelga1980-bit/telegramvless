@@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #endif // Q_OS_MAC
 
 #include <QtCore/QLockFile>
+#include <QtCore/QPointer>
 #include <QtGui/QSessionManager>
 #include <QtGui/QScreen>
 #include <QtGui/qpa/qplatformscreen.h>
@@ -501,49 +502,103 @@ void Sandbox::newInstanceConnected() {
 }
 
 void Sandbox::readClients() {
+	if (_readingClients) {
+		_readClientsPending = true;
+		return;
+	}
+	_readingClients = true;
+	const auto readingGuard = gsl::finally([&] {
+		_readingClients = false;
+		if (_closeLocalClientsAfterRead) {
+			_closeLocalClientsAfterRead = false;
+			closeLocalClients();
+		} else if (std::exchange(_readClientsPending, false)) {
+			InvokeQueued(this, [=] { readClients(); });
+		}
+	});
+
 	// This method can be called before Application is constructed.
 	QList<QUrl> startUrls;
-	for (LocalClients::iterator i = _localClients.begin(), e = _localClients.end(); i != e; ++i) {
-		i->second.append(i->first->readAll());
+	const auto clients = [&] {
+		auto result = QList<QPointer<QLocalSocket>>();
+		result.reserve(_localClients.size());
+		for (const auto &entry : _localClients) {
+			result.push_back(entry.first);
+		}
+		return result;
+	}();
+	for (const auto &guarded : clients) {
+		const auto client = guarded.data();
+		if (!client) {
+			continue;
+		}
+		const auto i = ranges::find(
+			_localClients,
+			client,
+			&LocalClient::first);
+		if (i == _localClients.end()) {
+			continue;
+		}
+		i->second.append(client->readAll());
 		if (i->second.size()) {
 			bool activationRequired = false;
 			QString cmds(QString::fromLatin1(i->second));
 			int32 from = 0, l = cmds.length();
+			auto commands = QStringList();
 			for (int32 to = cmds.indexOf(QChar(';'), from); to >= from; to = (from < l) ? cmds.indexOf(QChar(';'), from) : -1) {
-				auto cmd = base::StringViewMid(cmds, from, to - from);
+				commands.push_back(cmds.mid(from, to - from));
+				from = to + 1;
+			}
+			if (from > 0) {
+				i->second = i->second.mid(from);
+			}
+
+			// Command execution may synchronously emit aboutToQuit and tear
+			// down the application. Keep no iterator or reference into
+			// _localClients across that re-entrant boundary.
+			for (const auto &command : commands) {
+				auto cmd = QStringView(command);
 				if (cmd.startsWith(u"CMD:"_q)) {
 					const auto processId = QApplication::applicationPid();
-					const auto windowId = execExternal(cmds.mid(from + 4, to - from - 4));
+					const auto windowId = execExternal(command.mid(4));
 					const auto response = u"RES:%1_%2;"_q.arg(processId).arg(windowId).toLatin1();
-					i->first->write(response.data(), response.size());
+					if (guarded) {
+						client->write(response.data(), response.size());
+					}
 				} else if (cmd.startsWith(u"XDG_ACTIVATION_TOKEN:"_q)) {
-					qputenv("XDG_ACTIVATION_TOKEN", QByteArray::fromBase64(cmds.mid(from + 21, to - from - 21).toLatin1()));
+					qputenv("XDG_ACTIVATION_TOKEN", QByteArray::fromBase64(command.mid(21).toLatin1()));
 				} else if (cmd.startsWith(u"OPEN:"_q)) {
-					startUrls.append(cmds.mid(from + 5, to - from - 5).mid(0, 8192));
+					startUrls.append(command.mid(5).mid(0, 8192));
 					if (!activationRequired) {
 						activationRequired = StartUrlRequiresActivate(startUrls.back().toString());
 					}
 				} else if (cmd.startsWith(u"CTRL:"_q)) {
 					const auto payload = HandleExternalControl(
-						cmds.mid(from + 5, to - from - 5));
+						command.mid(5));
 					const auto response = QByteArray("DATA:")
 						+ payload.toBase64()
 						+ ';';
-					i->first->write(response);
+					if (guarded) {
+						client->write(response);
+					}
 				} else {
 					LOG(("Sandbox Error: unknown command %1 passed in local socket").arg(cmd.toString()));
 				}
-				from = to + 1;
-			}
-			if (from > 0) {
-				i->second = i->second.mid(from);
+				if (Quitting()) {
+					if (guarded) {
+						client->flush();
+					}
+					return;
+				}
 			}
 			const auto processId = QApplication::applicationPid();
 			const auto windowId = activationRequired
 				? execExternal("show")
 				: 0;
 			const auto response = u"RES:%1_%2;"_q.arg(processId).arg(windowId).toLatin1();
-			i->first->write(response.data(), response.size());
+			if (guarded) {
+				client->write(response.data(), response.size());
+			}
 		}
 	}
 	cRefStartUrls() << base::take(startUrls);
@@ -563,6 +618,13 @@ void Sandbox::removeClients() {
 		} else {
 			++i;
 		}
+	}
+}
+
+void Sandbox::closeLocalClients() {
+	for (const auto &localClient : base::take(_localClients)) {
+		localClient.first->flush();
+		localClient.first->close();
 	}
 }
 
@@ -727,10 +789,14 @@ void Sandbox::closeApplication() {
 	_application = nullptr;
 
 	_localServer.close();
-	for (const auto &localClient : base::take(_localClients)) {
-		localClient.first->close();
+	if (_readingClients) {
+		// A quit command can emit aboutToQuit synchronously from
+		// readClients(). Let that stack frame send its response before its
+		// client storage is released.
+		_closeLocalClientsAfterRead = true;
+	} else {
+		closeLocalClients();
 	}
-	_localClients.clear();
 
 	_localSocket.close();
 

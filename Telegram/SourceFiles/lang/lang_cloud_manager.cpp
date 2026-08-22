@@ -118,7 +118,7 @@ NotReadyBox::NotReadyBox(
 void NotReadyBox::prepare() {
 	setTitle(tr::lng_language_not_ready_title());
 
-	auto text = tr::lng_language_not_ready_about(
+	auto text = tr::lng_tevless_language_not_ready_about(
 		lt_lang_name,
 		rpl::single(tr::marked(_name)),
 		lt_link,
@@ -477,41 +477,18 @@ void CloudManager::switchToLanguage(const Language &data) {
 		return;
 	}
 
-	_api->request(base::take(_getKeysForSwitchRequestId)).cancel();
 	if (data.id == u"#custom"_q) {
 		performSwitchToCustom();
 	} else if (canApplyWithoutRestart(data.id)) {
 		performSwitchAndAddToRecent(data);
 	} else {
-		QVector<MTPstring> keys;
-		keys.reserve(3);
-		keys.push_back(MTP_string("lng_sure_save_language"));
-		_getKeysForSwitchRequestId = _api->request(MTPlangpack_GetStrings(
-			MTP_string(Lang::CloudLangPackName()),
-			MTP_string(data.id),
-			MTP_vector<MTPstring>(std::move(keys))
-		)).done([=](const MTPVector<MTPLangPackString> &result) {
-			_getKeysForSwitchRequestId = 0;
-			const auto values = Instance::ParseStrings(result);
-			const auto getValue = [&](ushort key) {
-				auto it = values.find(key);
-				return (it == values.cend())
-					? GetOriginalValue(key)
-					: it->second;
-			};
-			const auto text = tr::lng_sure_save_language(tr::now)
-				+ "\n\n"
-				+ getValue(tr::lng_sure_save_language.base);
-			Ui::show(
-				Ui::MakeConfirmBox({
-					.text = text,
-					.confirmed = [=] { performSwitchAndRestart(data); },
-					.confirmText = tr::lng_box_ok(),
-				}),
-				Ui::LayerOption::KeepOther);
-		}).fail([=] {
-			_getKeysForSwitchRequestId = 0;
-		}).send();
+		Ui::show(
+			Ui::MakeConfirmBox({
+				.text = tr::lng_tevless_sure_save_language(tr::now),
+				.confirmed = [=] { performSwitchAndRestart(data); },
+				.confirmText = tr::lng_box_ok(),
+			}),
+			Ui::LayerOption::KeepOther);
 	}
 }
 
@@ -526,7 +503,7 @@ void CloudManager::performSwitchToCustom() {
 		const auto filePath = result.paths.front();
 		auto loader = Lang::FileParser(
 			filePath,
-			{ tr::lng_sure_save_language.base });
+			{ tr::lng_tevless_sure_save_language.base });
 		if (loader.errors().isEmpty()) {
 			if (_api) {
 				_api->request(
@@ -536,16 +513,7 @@ void CloudManager::performSwitchToCustom() {
 			if (canApplyWithoutRestart(u"#custom"_q)) {
 				_langpack.switchToCustomFile(filePath);
 			} else {
-				const auto values = loader.found();
-				const auto getValue = [&](ushort key) {
-					const auto it = values.find(key);
-					return (it == values.cend())
-						? GetOriginalValue(key)
-						: it.value();
-				};
-				const auto text = tr::lng_sure_save_language(tr::now)
-					+ "\n\n"
-					+ getValue(tr::lng_sure_save_language.base);
+				const auto text = tr::lng_tevless_sure_save_language(tr::now);
 				const auto change = [=] {
 					_langpack.switchToCustomFile(filePath);
 					Core::Restart();

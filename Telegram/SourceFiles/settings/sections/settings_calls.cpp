@@ -718,7 +718,7 @@ void Calls::requestPermissionAndStartTestingMicrophone() {
 			controller->hideLayer();
 		};
 		controller()->show(Ui::MakeConfirmBox({
-			.text = tr::lng_no_mic_permission(),
+			.text = tr::lng_tevless_no_mic_permission(),
 			.confirmed = showSystemSettings,
 			.confirmText = tr::lng_menu_settings(),
 		}));

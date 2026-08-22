@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/username_box.h"
 #include "core/application.h"
 #include "core/click_handler_types.h"
+#include "core/version.h"
 #include "data/components/credits.h"
 #include "data/components/promo_suggestions.h"
 #include "data/data_chat_filters.h"
@@ -1203,7 +1204,11 @@ void OpenAskQuestionConfirm(not_null<Window::SessionController*> window) {
 		}).send();
 	};
 	window->show(Ui::MakeConfirmBox({
-		.text = tr::lng_settings_ask_sure(),
+		.text = tr::lng_tevless_settings_ask_sure(
+			lt_support_link,
+			tr::lng_tevless_settings_ask_sure_support(
+				tr::url(AppSupportUrl.utf16())),
+			tr::marked),
 		.confirmed = sure,
 		.cancelled = [=](Fn<void()> close) {
 			OpenFaq(window);

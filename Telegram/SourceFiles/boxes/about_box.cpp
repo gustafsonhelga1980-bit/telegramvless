@@ -35,36 +35,41 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace {
 
 rpl::producer<TextWithEntities> Text1() {
-	return tr::lng_about_text1(
+	return tr::lng_tevless_about_text1(
 		lt_api_link,
-		tr::lng_about_text1_api(tr::url(u"https://core.telegram.org/api"_q)),
+		tr::lng_tevless_about_text1_api(
+			tr::url(u"https://core.telegram.org/api"_q)),
 		tr::marked);
 }
 
 rpl::producer<TextWithEntities> Text2() {
-	return tr::lng_about_text2(
+	return tr::lng_tevless_about_text2(
 		lt_gpl_link,
 		rpl::single(tr::link(
 			"GNU GPL",
-			"https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE")),
+			AppLicenseUrl.utf16())),
 		lt_github_link,
-		rpl::single(tr::link(
-			"GitHub",
-			"https://github.com/telegramdesktop/tdesktop")),
+		tr::lng_tevless_about_text2_source(tr::url(AppProjectUrl.utf16())),
+		lt_upstream_link,
+		tr::lng_tevless_about_text2_upstream(
+			tr::url(AppUpstreamUrl.utf16())),
 		tr::marked);
 }
 
 rpl::producer<TextWithEntities> Text3() {
-	return tr::lng_about_text3(
+	return tr::lng_tevless_about_text3(
+		lt_support_link,
+		tr::lng_tevless_about_text3_support(
+			tr::url(AppSupportUrl.utf16())),
 		lt_faq_link,
-		tr::lng_about_text3_faq(tr::url(telegramFaqLink())),
+		tr::lng_tevless_about_text3_faq(tr::url(telegramFaqLink())),
 		tr::marked);
 }
 
 } // namespace
 
 void AboutBox(not_null<Ui::GenericBox*> box) {
-	box->setTitle(u"Telegram Desktop"_q);
+	box->setTitle(AppName.utf16());
 
 	auto layout = box->verticalLayout();
 
@@ -105,9 +110,9 @@ void AboutBox(not_null<Ui::GenericBox*> box) {
 
 			box->getDelegate()->show(
 				Ui::MakeInformBox(
-					"The link to the current private alpha "
-					"version of Telegram Desktop was copied "
-					"to the clipboard."));
+					u"The link to the current private alpha "
+					"version of %1 was copied to the clipboard."_q
+						.arg(AppName.utf16())));
 		} else {
 			File::OpenUrl(Core::App().changelogLink());
 		}
@@ -150,12 +155,14 @@ QString telegramFaqLink() {
 }
 
 QString currentVersionText() {
-	auto result = QString::fromLatin1(AppVersionStr);
+	auto upstream = QString::fromLatin1(AppVersionStr);
 	if (cAlphaVersion()) {
-		result += u" alpha %1"_q.arg(cAlphaVersion() % 1000);
+		upstream += u" alpha %1"_q.arg(cAlphaVersion() % 1000);
 	} else if (AppBetaVersion) {
-		result += " beta";
+		upstream += " beta";
 	}
+	auto result = u"%1 (based on TDesktop %2)"_q
+		.arg(AppReleaseVersion.utf16(), upstream);
 	if (Platform::IsWindows64Bit()) {
 		result += " x64";
 	} else if (Platform::IsWindowsARM64()) {
@@ -311,4 +318,3 @@ void ArchiveHintBox(
 		box->addButton(std::move(button));
 	}
 }
-

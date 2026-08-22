@@ -1,6 +1,20 @@
-# [Telegram Desktop][telegram_desktop] – Official Messenger
+# TeVLESS
 
-This is the complete source code and the build instructions for the official [Telegram][telegram] messenger desktop client, based on the [Telegram API][telegram_api] and the [MTProto][telegram_proto] secure protocol.
+> **Unofficial Telegram client with VLESS routing**
+>
+> TeVLESS is an independent fork. It is not affiliated with or endorsed by
+> Telegram. The TeVLESS release project is maintained at
+> [gustafsonhelga1980-bit/tevless][tevless_project].
+
+TeVLESS is based on [Telegram Desktop][telegram_desktop], which uses the
+[Telegram API][telegram_api] and the [MTProto][telegram_proto] secure protocol.
+The upstream attribution, licensing information, project badges, downloads,
+and build documentation are retained below for reference.
+
+## Upstream project: Telegram Desktop
+
+[Telegram Desktop][telegram_desktop] is the official desktop client for the
+[Telegram][telegram] messaging service.
 
 [![Version](https://badge.fury.io/gh/telegramdesktop%2Ftdesktop.svg)](https://github.com/telegramdesktop/tdesktop/releases)
 [![Build Status](https://github.com/telegramdesktop/tdesktop/workflows/Windows./badge.svg)](https://github.com/telegramdesktop/tdesktop/actions)
@@ -76,6 +90,7 @@ Version **1.8.15** was the last that supports older systems
 [//]: # (LINKS)
 [telegram]: https://telegram.org
 [telegram_desktop]: https://desktop.telegram.org
+[tevless_project]: https://github.com/gustafsonhelga1980-bit/tevless
 [telegram_api]: https://core.telegram.org
 [telegram_proto]: https://core.telegram.org/mtproto
 [license]: LICENSE
@@ -96,4 +111,3 @@ Version **1.8.15** was the last that supports older systems
 </a>
 
 CI infrastructure sponsored by [Depot](https://depot.dev) — fast GitHub Actions runners.
-

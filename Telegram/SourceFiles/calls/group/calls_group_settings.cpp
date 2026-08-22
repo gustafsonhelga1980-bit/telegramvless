@@ -458,10 +458,10 @@ void SettingsBox(
 						object_ptr<Ui::FlatLabel>(
 							box.get(),
 							rpl::combine(
-								tr::lng_group_call_mac_access(),
+								tr::lng_tevless_group_call_mac_access(),
 								(requestInputMonitoring
-									? tr::lng_group_call_mac_input()
-									: tr::lng_group_call_mac_accessibility())
+									? tr::lng_tevless_group_call_mac_input()
+									: tr::lng_tevless_group_call_mac_accessibility())
 							) | rpl::map([](QString a, QString b) {
 								auto result = tr::rich(a);
 								result.append("\n\n").append(tr::rich(b));

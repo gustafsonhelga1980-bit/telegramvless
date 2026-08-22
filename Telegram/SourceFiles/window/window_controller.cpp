@@ -328,7 +328,7 @@ void Controller::showTermsDelete() {
 		}
 	};
 	show(Ui::MakeConfirmBox({
-		.text = tr::lng_terms_delete_warning(),
+		.text = tr::lng_tevless_terms_delete_warning(),
 		.confirmed = deleteByTerms,
 		.confirmText = tr::lng_terms_delete_now(),
 		.confirmStyle = &st::attentionBoxButton,

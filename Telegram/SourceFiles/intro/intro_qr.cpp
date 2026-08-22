@@ -403,7 +403,7 @@ void QrWidget::setupPasskeyLink() {
 					using Error = Platform::WebAuthn::Error;
 					if (result.error == Error::UnsignedBuild) {
 						showError(
-							tr::lng_settings_passkeys_unsigned_error());
+							tr::lng_tevless_settings_passkeys_unsigned_error());
 					}
 					return;
 				}
@@ -521,7 +521,7 @@ void QrWidget::sendCheckPasswordRequest() {
 					close();
 				};
 				Ui::show(Ui::MakeConfirmBox({
-					.text = tr::lng_passport_app_out_of_date(),
+					.text = tr::lng_tevless_passport_app_out_of_date(),
 					.confirmed = callback,
 					.confirmText = tr::lng_menu_update(),
 				}));

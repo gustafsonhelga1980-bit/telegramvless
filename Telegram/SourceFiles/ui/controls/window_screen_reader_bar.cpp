@@ -133,7 +133,7 @@ Bar::Bar(not_null<QWidget*> parent)
 : RpWidget(parent)
 , _label(
 	this,
-	tr::lng_screen_reader_bar_text(),
+	tr::lng_tevless_screen_reader_bar_text(),
 	st::windowScreenReaderLabel)
 , _disable(object_ptr<DisableButton>(this)) {
 }

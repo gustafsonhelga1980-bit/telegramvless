@@ -1210,7 +1210,7 @@ void LocalStorage::DeviceBar::refresh() {
 void LocalStorage::DeviceBar::apply() {
 	const auto used = std::max(_total - _free, int64());
 	_cache = std::min(_reported, used);
-	_subtitle->setText(tr::lng_local_storage_device_usage(
+	_subtitle->setText(tr::lng_tevless_local_storage_device_usage(
 		tr::now,
 		lt_percent,
 		FormatStoragePercent(_cache, _total)));
@@ -1302,7 +1302,7 @@ TextWithEntities LocalStorage::DeviceBar::tooltipText() const {
 		result.append(label).append(u": "_q).append(
 			Ui::Text::Bold(FormatStorageSize(size)));
 	};
-	line(tr::lng_local_storage_device_telegram(tr::now), _cache);
+	line(tr::lng_tevless_local_storage_device_telegram(tr::now), _cache);
 	line(tr::lng_local_storage_device_other(tr::now), other);
 	line(tr::lng_local_storage_device_free(tr::now), _free);
 	line(tr::lng_local_storage_device_total(tr::now), _total);

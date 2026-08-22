@@ -4262,7 +4262,7 @@ void HistoryWidget::showAboutTopPromotion() {
 		? QString()
 		: Lang::GetNonDefaultValue(kPsaAboutPrefix + type.toUtf8());
 	const auto text = type.isEmpty()
-		? tr::lng_proxy_sponsor_about(tr::now, tr::rich)
+		? tr::lng_tevless_proxy_sponsor_about(tr::now, tr::rich)
 		: custom.isEmpty()
 		? tr::lng_about_psa_default(tr::now, tr::rich)
 		: tr::rich(custom);

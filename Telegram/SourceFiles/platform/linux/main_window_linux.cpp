@@ -17,6 +17,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/core_settings.h"
 #include "core/sandbox.h"
+#include "core/version.h"
 #include "boxes/peer_list_controllers.h"
 #include "boxes/about_box.h"
 #include "lang/lang_keys.h"
@@ -221,7 +222,10 @@ void MainWindow::createGlobalMenu() {
 		});
 
 	auto quit = file->addAction(
-		tr::lng_mac_menu_quit_telegram(tr::now, lt_telegram, u"Telegram"_q),
+		tr::lng_mac_menu_quit_telegram(
+			tr::now,
+			lt_telegram,
+			AppName.utf16()),
 		this,
 		[=] { quitFromTray(); },
 		QKeySequence::Quit);
@@ -420,7 +424,7 @@ void MainWindow::createGlobalMenu() {
 		tr::lng_mac_menu_about_telegram(
 			tr::now,
 			lt_telegram,
-			u"Telegram"_q),
+			AppName.utf16()),
 		[=] {
 			ensureWindowShown();
 			controller().show(Box(AboutBox));

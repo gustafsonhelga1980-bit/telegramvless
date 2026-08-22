@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image_prepare.h"
 #include "ui/painter.h"
 #include "core/application.h"
+#include "core/version.h"
 #include "styles/style_window.h"
 #include "styles/style_media_view.h"
 #include "window/window_controller.h"
@@ -79,7 +80,7 @@ void PreviewWindowTitle(Painter &p, const style::palette &palette, QRect body, i
 	p.setPen(st::titleFgActive[palette]);
 	p.setFont(font);
 
-	p.drawText(titleRect, u"Telegram"_q, style::al_center);
+	p.drawText(titleRect, AppName.utf16(), style::al_center);
 
 	auto isGraphite = ([NSColor currentControlTint] == NSGraphiteControlTint);
 	auto buttonSkip = 8;

@@ -40,7 +40,7 @@ PreLaunchWindow::PreLaunchWindow(QString title) {
 	setWindowIcon(Window::CreateIcon());
 	setWindowFlags(Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint | Qt::WindowCloseButtonHint);
 
-	setWindowTitle(title.isEmpty() ? u"Telegram"_q : title);
+	setWindowTitle(title.isEmpty() ? AppName.utf16() : title);
 
 	QPalette p(palette());
 	p.setColor(QPalette::Window, QColor(255, 255, 255));
@@ -245,7 +245,8 @@ NotStartedWindow::NotStartedWindow()
 : _label(this)
 , _log(this)
 , _close(this) {
-	_label.setText(u"Could not start Telegram Desktop!\nYou can see complete log below:"_q);
+	_label.setText(u"Could not start %1!\nYou can see the complete log below:"_q
+		.arg(AppName.utf16()));
 
 	_log.setPlainText(Logs::full());
 
@@ -387,9 +388,10 @@ LastCrashedWindow::LastCrashedWindow(
 		[=] { networkSettings(); });
 
 	if (_sendingState == SendingNoReport) {
-		_label.setText(u"Last time Telegram Desktop was not closed properly."_q);
+		_label.setText(u"Last time %1 was not closed properly."_q
+			.arg(AppName.utf16()));
 	} else {
-		_label.setText(u"Last time Telegram Desktop crashed :("_q);
+		_label.setText(u"Last time %1 crashed :("_q.arg(AppName.utf16()));
 	}
 
 	if (_updaterData) {
@@ -480,9 +482,9 @@ LastCrashedWindow::LastCrashedWindow(
 	});
 	_saveReport.setText(u"SAVE TO FILE"_q);
 	connect(&_saveReport, &QPushButton::clicked, [=] { saveReport(); });
-	_getApp.setText(u"GET THE LATEST OFFICIAL VERSION OF TELEGRAM DESKTOP"_q);
+	_getApp.setText(u"OPEN TEVLESS RELEASES"_q);
 	connect(&_getApp, &QPushButton::clicked, [=] {
-		QDesktopServices::openUrl(u"https://desktop.telegram.org"_q);
+		QDesktopServices::openUrl(AppReleasesUrl.utf16());
 	});
 
 	_send.setText(u"SEND CRASH REPORT"_q);
@@ -500,7 +502,12 @@ LastCrashedWindow::LastCrashedWindow(
 }
 
 void LastCrashedWindow::saveReport() {
-	QString to = QFileDialog::getSaveFileName(0, u"Telegram Crash Report"_q, QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + u"/report.telegramcrash"_q, u"Telegram crash report (*.telegramcrash)"_q);
+	QString to = QFileDialog::getSaveFileName(
+		0,
+		u"TeVLESS Crash Report"_q,
+		QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+			+ u"/report.telegramcrash"_q,
+		u"TeVLESS crash report (*.telegramcrash)"_q);
 	if (!to.isEmpty()) {
 		QFile file(to);
 		if (file.open(QIODevice::WriteOnly)) {
@@ -615,12 +622,15 @@ void LastCrashedWindow::checkingFinished() {
 	LOG(("Crash report check for sending done, result: %1").arg(QString::fromUtf8(result)));
 
 	if (result == "Old") {
-		_pleaseSendReport.setText(u"This report is about some old version of Telegram Desktop."_q);
+		_pleaseSendReport.setText(u"This report is about an old version of %1."_q
+			.arg(AppName.utf16()));
 		_sendingState = SendingTooOld;
 		updateControls();
 		return;
 	} else if (result == "Unofficial") {
-		_pleaseSendReport.setText(u"You use some custom version of Telegram Desktop."_q);
+		_pleaseSendReport.setText(
+			u"This build of %1 is not recognized by the crash-report service."_q
+				.arg(AppName.utf16()));
 		_sendingState = SendingUnofficial;
 		updateControls();
 		return;
@@ -908,7 +918,14 @@ void LastCrashedWindow::updateControls() {
 		h += _networkSettings.height() + padding;
 	}
 
-	QSize s(2 * padding + QFontMetrics(_label.font()).horizontalAdvance(u"Last time Telegram Desktop was not closed properly."_q) + padding + _networkSettings.width(), h);
+	QSize s(
+		2 * padding
+			+ QFontMetrics(_label.font()).horizontalAdvance(
+				u"Last time %1 was not closed properly."_q
+					.arg(AppName.utf16()))
+			+ padding
+			+ _networkSettings.width(),
+		h);
 	if (s == size()) {
 		resizeEvent(0);
 	} else {

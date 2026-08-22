@@ -55,8 +55,8 @@ object_ptr<Ui::GenericBox> ScreenSharingPrivacyRequestBox() {
 			object_ptr<Ui::FlatLabel>(
 				box.get(),
 				rpl::combine(
-					tr::lng_group_call_mac_screencast_access(),
-					tr::lng_group_call_mac_recording()
+					tr::lng_tevless_group_call_mac_screencast_access(),
+					tr::lng_tevless_group_call_mac_recording()
 				) | rpl::map([](QString a, QString b) {
 					auto result = tr::rich(a);
 					result.append("\n\n").append(tr::rich(b));

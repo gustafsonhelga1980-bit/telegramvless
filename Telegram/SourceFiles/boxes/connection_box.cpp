@@ -490,7 +490,7 @@ void AddProxyFromClipboard(
 				((success == Result::IncorrectSecret)
 					? tr::lng_proxy_incorrect_secret(tr::now, tr::rich)
 					: (success == Result::Unsupported)
-					? tr::lng_proxy_unsupported(tr::now, tr::rich)
+					? tr::lng_tevless_proxy_unsupported(tr::now, tr::rich)
 					: tr::lng_proxy_invalid(tr::now, tr::rich))));
 		}
 	}
@@ -1790,7 +1790,7 @@ void ProxiesBoxController::ShowApplyConfirmation(
 		const auto status = proxy.status();
 		auto box = Ui::MakeInformBox(
 			((status == ProxyData::Status::Unsupported)
-				? tr::lng_proxy_unsupported(tr::now, tr::rich)
+				? tr::lng_tevless_proxy_unsupported(tr::now, tr::rich)
 				: (status == ProxyData::Status::IncorrectSecret)
 				? tr::lng_proxy_incorrect_secret(tr::now, tr::rich)
 				: tr::lng_proxy_invalid(tr::now, tr::rich)));

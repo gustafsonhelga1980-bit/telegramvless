@@ -389,7 +389,7 @@ void ActivateBotCommand(ClickHandlerContext context, int row, int column) {
 	case ButtonType::RequestLocation: {
 		HideSingleUseKeyboard(controller, item);
 		controller->show(
-			Ui::MakeInformBox(tr::lng_bot_share_location_unavailable()));
+			Ui::MakeInformBox(tr::lng_tevless_bot_share_location_unavailable()));
 	} break;
 
 	case ButtonType::RequestPhone: {

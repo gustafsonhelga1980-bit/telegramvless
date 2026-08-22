@@ -469,7 +469,7 @@ void PasskeysNoneBox(
 						using Error = Platform::WebAuthn::Error;
 						if (result.error == Error::UnsignedBuild) {
 							show->showToast(
-								tr::lng_settings_passkeys_unsigned_error(
+								tr::lng_tevless_settings_passkeys_unsigned_error(
 									tr::now));
 						}
 						return;

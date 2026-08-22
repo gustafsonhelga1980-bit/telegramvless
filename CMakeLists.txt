@@ -1,4 +1,4 @@
-# This file is part of Telegram Desktop,
+# This file is derived from Telegram Desktop,
 # the official desktop application for the Telegram messaging service.
 #
 # For license and copyright information please follow this link:
@@ -19,8 +19,8 @@ endif()
 project(Telegram
     LANGUAGES C CXX
     VERSION ${desktop_app_version_cmake}
-    DESCRIPTION "Official Telegram Desktop messenger"
-    HOMEPAGE_URL "https://desktop.telegram.org"
+    DESCRIPTION "TeVLESS unofficial Telegram client with VLESS routing"
+    HOMEPAGE_URL "https://github.com/gustafsonhelga1980-bit/tevless"
 )
 
 enable_testing()

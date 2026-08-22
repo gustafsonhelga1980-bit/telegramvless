@@ -440,7 +440,7 @@ object_ptr<Ui::BoxContent> CloudPasswordAppOutdatedBox() {
 		close();
 	};
 	return Ui::MakeConfirmBox({
-		.text = tr::lng_passport_app_out_of_date(),
+		.text = tr::lng_tevless_passport_app_out_of_date(),
 		.confirmed = callback,
 		.confirmText = tr::lng_menu_update(),
 	});

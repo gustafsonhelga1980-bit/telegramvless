@@ -43,6 +43,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/unixtime.h"
 #include "core/application.h"
 #include "core/click_handler_types.h" // ClickHandlerContext.
+#include "core/version.h"
 #include "settings/settings_credits_graphics.h"
 #include "storage/storage_account.h"
 #include "ui/boxes/confirm_box.h"
@@ -1377,9 +1378,9 @@ void CheckPollVoteNotificationSchedule(
 }
 
 [[nodiscard]] TextWithEntities UnsupportedMessageText() {
-	const auto siteLink = u"https://desktop.telegram.org"_q;
+	const auto siteLink = AppReleasesUrl.utf16();
 	auto result = TextWithEntities{
-		tr::lng_message_unsupported(tr::now, lt_link, siteLink)
+		tr::lng_tevless_message_unsupported(tr::now, lt_link, siteLink)
 	};
 	TextUtilities::ParseEntities(result, Ui::ItemTextNoMonoOptions().flags);
 	result.entities.push_front(
@@ -1394,9 +1395,9 @@ HistoryMessageMarkupData UnsupportedMessageMarkup() {
 	auto row = std::vector<Button>();
 	row.emplace_back(
 		Button::Type::Url,
-		tr::lng_update_telegram(tr::now),
+		tr::lng_tevless_update_telegram(tr::now),
 		Button::Visual(),
-		QByteArray("https://desktop.telegram.org"));
+		AppReleasesUrl.utf8());
 	markup.rows.push_back(std::move(row));
 	return markup;
 }

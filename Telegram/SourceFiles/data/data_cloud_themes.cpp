@@ -354,7 +354,7 @@ void CloudThemes::resolve(
 		showPreview(controller, result);
 	}).fail([=](const MTP::Error &error) {
 		if (error.type() == u"THEME_FORMAT_INVALID"_q) {
-			controller->show(Ui::MakeInformBox(tr::lng_theme_no_desktop()));
+			controller->show(Ui::MakeInformBox(tr::lng_tevless_theme_no_desktop()));
 		}
 	}).send();
 }
@@ -399,7 +399,7 @@ void CloudThemes::showPreview(
 			.confirmText = tr::lng_chat_theme_apply(),
 		}));
 	} else {
-		controller->show(Ui::MakeInformBox(tr::lng_theme_no_desktop()));
+		controller->show(Ui::MakeInformBox(tr::lng_tevless_theme_no_desktop()));
 	}
 }
 

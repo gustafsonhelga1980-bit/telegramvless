@@ -258,13 +258,13 @@ void Controller::Unsupported::setup(not_null<PeerData*> peer) {
 
 	_text = std::make_unique<Ui::FlatLabel>(
 		wrap,
-		tr::lng_stories_unsupported(),
+		tr::lng_tevless_stories_unsupported(),
 		st::storiesUnsupportedLabel);
 	_text->show();
 
 	_button = std::make_unique<Ui::RoundButton>(
 		wrap,
-		tr::lng_update_telegram(),
+		tr::lng_tevless_update_telegram(),
 		st::storiesUnsupportedUpdate);
 	_button->show();
 
