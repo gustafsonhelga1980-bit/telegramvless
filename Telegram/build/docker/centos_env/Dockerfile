@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM rockylinux:8 AS builder
+FROM --platform=linux/amd64 docker.io/library/rockylinux@sha256:2d05a9266523bbf24f33ebc3a9832e4d5fd74b973c220f2204ca802286aa275d AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ENV LANG=C.UTF-8
